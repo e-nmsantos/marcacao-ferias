@@ -1,0 +1,40 @@
+{
+  "version": 2,
+  "exported_at": "2026-04-22T20:12:44.996608",
+  "vacations": [],
+  "staff": [
+    {
+      "Nome": "Nuno Santos",
+      "Equipa": "Apoio",
+      "Função": "Coordenador do Apoio",
+      "Ativo": true
+    }
+  ],
+  "users": {
+    "admin": {
+      "password_hash": "pbkdf2_sha256$200000$Z1UP++hg6MmOpllD2XXe9A==$l5XjKw3K55JRP3UuhchkXQh6DOA5rg4JuMyx5q8EYJQ=",
+      "role": "admin",
+      "name": "Administrador"
+    },
+    "maria": {
+      "password_hash": "pbkdf2_sha256$200000$wORkS9D6HW7pXF72d5rkEA==$aRFSfTi4ENvaWDKl5qrPuJntyvF3BzV7UmzuobdKrwI=",
+      "role": "user",
+      "name": "Maria"
+    },
+    "joao": {
+      "password_hash": "pbkdf2_sha256$200000$CDyCSihP37kEQ3OpoF26lw==$I924cVDipxLShQMHQLZdYSaLpjbQPKvuBrtGomuArnk=",
+      "role": "user",
+      "name": "João"
+    },
+    "consulta": {
+      "password_hash": "pbkdf2_sha256$200000$YebZRordTvC6IDp4crXIsg==$+Zw8GBqoiJSRTp998XC2R85o6Tq/8cVf4gvHFnB0nJ8=",
+      "role": "viewer",
+      "name": "Consulta"
+    },
+    "jm": {
+      "password_hash": "pbkdf2_sha256$200000$Tqb8XDJ4vPoLibZtptZLTg==$kOl34spON4vhcsDRjwKsx9f486Ut4E7c68Ft4igD3KI=",
+      "role": "user",
+      "name": "Joana Moço"
+    }
+  }
+}
