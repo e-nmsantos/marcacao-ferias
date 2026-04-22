@@ -29,9 +29,9 @@ STATUS_LABELS = {
     "approved": "Aprovado",
     "rejected": "Rejeitado",
 }
-NAV_ADMIN = ["Calendário", "Pedidos", "Pessoal", "Logins", "Backup"]
+NAV_ADMIN = ["Calendário", "Pedidos", "Relatórios", "Pessoal", "Logins", "Backup"]
 NAV_USER = ["Calendário", "Meus Pedidos"]
-NAV_VIEWER = ["Calendário", "Pedidos"]
+NAV_VIEWER = ["Calendário", "Pedidos", "Relatórios"]
 
 DEFAULT_USERS = {
     "admin": {
@@ -1242,6 +1242,123 @@ def render_staff_table() -> None:
         st.rerun()
 
 
+def report_period_label(year: int, month: int) -> str:
+    if month == 0:
+        return str(year)
+    return f"{month_name_pt(month)} {year}"
+
+
+def approved_report_rows(vacations: list[dict], holidays: dict[date, str], year: int, month: int, team: str) -> list[dict]:
+    rows: list[dict] = []
+    for vacation in vacations:
+        if vacation["status"] != "approved":
+            continue
+        if team != "Todas" and vacation.get("team", "") != team:
+            continue
+        if month == 0:
+            if vacation["start_date"].year != year and vacation["end_date"].year != year:
+                continue
+        else:
+            period_start = date(year, month, 1)
+            period_end = date(year + 1, 1, 1) - timedelta(days=1) if month == 12 else date(year, month + 1, 1) - timedelta(days=1)
+            if vacation["end_date"] < period_start or vacation["start_date"] > period_end:
+                continue
+        total_days = calculate_days(vacation["start_date"], vacation["end_date"])
+        business_days = calculate_business_days(vacation["start_date"], vacation["end_date"], holidays)
+        rows.append(
+            {
+                "Colaborador": vacation["employee_name"],
+                "Equipa": vacation.get("team", ""),
+                "Tipo": vacation.get("absence_type", "Férias"),
+                "Início": format_date(vacation["start_date"]),
+                "Fim": format_date(vacation["end_date"]),
+                "Dias": total_days,
+                "Dias úteis": business_days,
+                "Substituto": vacation.get("replacement_contact", ""),
+                "Comentário": vacation.get("reason", ""),
+                "Aprovado em": vacation["requested_at"].strftime("%d/%m/%Y %H:%M"),
+            }
+        )
+    rows.sort(key=lambda item: (item["Colaborador"], item["Início"]))
+    return rows
+
+
+def render_reports() -> None:
+    st.subheader("Relatórios")
+    st.caption("Exportação de férias aprovadas para partilha com a chefia e controlo interno da equipa.")
+
+    approved_vacations = [vacation for vacation in st.session_state.vacations if vacation["status"] == "approved"]
+    if not approved_vacations:
+        st.info("Ainda não existem férias aprovadas para relatório.")
+        return
+
+    teams = sorted({vacation.get("team", "").strip() for vacation in approved_vacations if vacation.get("team", "").strip()})
+    team_options = ["Apoio"] + [team for team in teams if team != "Apoio"] if "Apoio" in teams else teams
+    team_options = ["Todas"] + team_options
+    current_year = date.today().year
+    available_years = sorted(
+        {
+            vacation["start_date"].year
+            for vacation in approved_vacations
+        }
+        | {vacation["end_date"].year for vacation in approved_vacations},
+        reverse=True,
+    )
+    if current_year not in available_years:
+        available_years.insert(0, current_year)
+
+    filter_col1, filter_col2, filter_col3 = st.columns(3)
+    with filter_col1:
+        default_team_index = team_options.index("Apoio") if "Apoio" in team_options else 0
+        selected_team = st.selectbox("Equipa do relatório", options=team_options, index=default_team_index)
+    with filter_col2:
+        selected_year = st.selectbox("Ano", options=available_years, index=0)
+    with filter_col3:
+        month_options = [0] + list(range(1, 13))
+        selected_month = st.selectbox(
+            "Mês",
+            options=month_options,
+            format_func=lambda value: "Ano completo" if value == 0 else month_name_pt(value),
+            index=0,
+        )
+
+    holidays = portugal_holidays(selected_year, "Nenhum")
+    rows = approved_report_rows(approved_vacations, holidays, selected_year, selected_month, selected_team)
+    if not rows:
+        st.info("Não existem férias aprovadas para os filtros escolhidos.")
+        return
+
+    detail_df = pd.DataFrame(rows)
+    summary_df = (
+        detail_df.groupby(["Colaborador", "Equipa"], as_index=False)[["Dias", "Dias úteis"]]
+        .sum()
+        .sort_values(["Equipa", "Colaborador"])
+    )
+
+    report_title = f"Férias aprovadas - {selected_team} - {report_period_label(selected_year, selected_month)}"
+    st.markdown(f"**{report_title}**")
+
+    stat1, stat2, stat3 = st.columns(3)
+    stat1.info(f"Registos: {len(detail_df)}")
+    stat2.info(f"Dias totais: {int(detail_df['Dias'].sum())}")
+    stat3.info(f"Dias úteis: {int(detail_df['Dias úteis'].sum())}")
+
+    st.markdown("**Resumo por colaborador**")
+    st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+    st.markdown("**Detalhe aprovado**")
+    st.dataframe(detail_df, use_container_width=True, hide_index=True)
+
+    csv_data = detail_df.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        "Descarregar relatório CSV",
+        data=csv_data,
+        file_name=f"relatorio_ferias_{selected_team.lower()}_{selected_year}_{selected_month or 'ano'}.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+
+
 def build_backup_payload() -> dict:
     return build_data_payload(st.session_state.vacations, st.session_state.staff, st.session_state.users)
 
@@ -1347,6 +1464,8 @@ def main() -> None:
     elif current_page == "Meus Pedidos":
         mine = filtered_vacations(team_filter, status_filter, scope="mine")
         render_requests(mine, can_manage=False)
+    elif current_page == "Relatórios" and (is_admin() or (current_user() or {}).get("role") == "viewer"):
+        render_reports()
     elif current_page == "Pessoal" and is_admin():
         render_staff_table()
     elif current_page == "Logins" and is_admin():
