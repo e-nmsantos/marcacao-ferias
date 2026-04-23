@@ -1288,7 +1288,7 @@ def report_rows(
 
 def render_reports() -> None:
     st.subheader("Relatórios")
-    st.caption("Exportação de férias autorizadas e pendentes para partilha com a chefia e controlo interno da equipa.")
+    st.caption("Mapa de férias para partilha com a chefia e controlo interno da equipa.")
 
     report_vacations = [vacation for vacation in st.session_state.vacations if vacation["status"] in {"approved", "pending"}]
     if not report_vacations:
@@ -1347,28 +1347,68 @@ def render_reports() -> None:
         .sum()
         .sort_values(["Equipa", "Colaborador", "Estado"])
     )
+    approved_df = detail_df[detail_df["Estado"] == STATUS_LABELS["approved"]].copy()
+    pending_df = detail_df[detail_df["Estado"] == STATUS_LABELS["pending"]].copy()
+    collaborator_df = (
+        detail_df.groupby(["Colaborador", "Equipa"], as_index=False)[["Dias", "Dias úteis"]]
+        .sum()
+        .sort_values(["Equipa", "Colaborador"])
+    )
 
     selected_status_labels = ", ".join(STATUS_LABELS[status] for status in selected_statuses)
     report_title = f"Férias {selected_status_labels.lower()} - {selected_team} - {report_period_label(selected_year, selected_month)}"
-    st.markdown(f"**{report_title}**")
+    st.markdown(f"### {report_title}")
+    st.caption(f"Emitido em {datetime.now().strftime('%d/%m/%Y %H:%M')} | Destinatário: Chefe de Gabinete")
 
     approved_count = int((detail_df["Estado"] == STATUS_LABELS["approved"]).sum())
     pending_count = int((detail_df["Estado"] == STATUS_LABELS["pending"]).sum())
-    stat1, stat2, stat3, stat4 = st.columns(4)
-    stat1.info(f"Registos: {len(detail_df)}")
-    stat2.info(f"Dias totais: {int(detail_df['Dias'].sum())}")
-    stat3.info(f"Dias úteis: {int(detail_df['Dias úteis'].sum())}")
-    stat4.info(f"Aprovados: {approved_count} | Pendentes: {pending_count}")
+    render_stats_cols = st.columns(4)
+    with render_stats_cols[0]:
+        render_stat_card("Registos", str(len(detail_df)), "blue", f"Equipa: {selected_team}")
+    with render_stats_cols[1]:
+        render_stat_card("Dias totais", str(int(detail_df["Dias"].sum())), "green", report_period_label(selected_year, selected_month))
+    with render_stats_cols[2]:
+        render_stat_card("Autorizados", str(approved_count), "pink", "Estado aprovado")
+    with render_stats_cols[3]:
+        render_stat_card("Pendentes", str(pending_count), "orange", "Aguarda validação")
 
     st.markdown("**Resumo por colaborador**")
+    st.dataframe(collaborator_df, use_container_width=True, hide_index=True)
+
+    st.markdown("**Resumo por estado**")
     st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
-    st.markdown("**Detalhe do relatório**")
+    if not approved_df.empty:
+        st.markdown("**Férias autorizadas**")
+        st.dataframe(approved_df, use_container_width=True, hide_index=True)
+    if not pending_df.empty:
+        st.markdown("**Férias pendentes**")
+        st.dataframe(pending_df, use_container_width=True, hide_index=True)
+
+    export_col1, export_col2 = st.columns(2)
+    detail_csv_data = detail_df.to_csv(index=False).encode("utf-8-sig")
+    summary_csv_data = collaborator_df.to_csv(index=False).encode("utf-8-sig")
+    export_col1.download_button(
+        "Descarregar detalhe CSV",
+        data=detail_csv_data,
+        file_name=f"relatorio_ferias_detalhe_{selected_team.lower()}_{selected_year}_{selected_month or 'ano'}.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+    export_col2.download_button(
+        "Descarregar resumo CSV",
+        data=summary_csv_data,
+        file_name=f"relatorio_ferias_resumo_{selected_team.lower()}_{selected_year}_{selected_month or 'ano'}.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+
+    st.markdown("**Detalhe completo do relatório**")
     st.dataframe(detail_df, use_container_width=True, hide_index=True)
 
     csv_data = detail_df.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
-        "Descarregar relatório CSV",
+        "Descarregar relatório completo CSV",
         data=csv_data,
         file_name=f"relatorio_ferias_{selected_team.lower()}_{selected_year}_{selected_month or 'ano'}.csv",
         mime="text/csv",
