@@ -56,6 +56,10 @@ DEFAULT_USERS = {
     },
 }
 
+EMPLOYEE_NAME_ALIASES = {
+    "MR": "Mónica Romão",
+}
+
 MUNICIPAL_HOLIDAYS = {
     "Nenhum": None,
     "Lisboa": (6, 13, "Santo António"),
@@ -99,6 +103,10 @@ def verify_password(password: str, stored_hash: str) -> bool:
     return hmac.compare_digest(expected_hash, stored_hash)
 
 
+def normalize_employee_name(name: str) -> str:
+    return EMPLOYEE_NAME_ALIASES.get(name.strip(), name.strip())
+
+
 def validate_user_account(username: str, item: dict) -> dict:
     if not isinstance(item, dict):
         raise DataStoreError("Conta de login inválida.")
@@ -139,7 +147,7 @@ def validate_users_map(items: object) -> dict[str, dict]:
 def validate_staff_member(item: dict) -> dict:
     if not isinstance(item, dict):
         raise DataStoreError("Registo de colaborador inválido.")
-    name = str(item.get("Nome", "")).strip()
+    name = normalize_employee_name(str(item.get("Nome", "")).strip())
     if not name:
         raise DataStoreError("Cada colaborador precisa de um nome.")
     return {
@@ -178,7 +186,7 @@ def deserialize_vacation(item: dict) -> dict:
         raise DataStoreError("Pedido com intervalo de datas inválido.")
     if out.get("status") not in {"pending", "approved", "rejected"}:
         raise DataStoreError("Pedido com estado inválido.")
-    out["employee_name"] = str(item.get("employee_name", "")).strip()
+    out["employee_name"] = normalize_employee_name(str(item.get("employee_name", "")).strip())
     if not out["employee_name"]:
         raise DataStoreError("Pedido sem nome de colaborador.")
     out["half_day"] = bool(item.get("half_day", False))
@@ -187,6 +195,8 @@ def deserialize_vacation(item: dict) -> dict:
     out["absence_type"] = str(item.get("absence_type", "Férias")).strip() or "Férias"
     out["replacement_contact"] = str(item.get("replacement_contact", "")).strip()
     out["reason"] = str(item.get("reason", "")).strip()
+    if out["employee_name"] == "Mónica Romão" and not out["team"]:
+        out["team"] = "Apoio"
     return out
 
 
