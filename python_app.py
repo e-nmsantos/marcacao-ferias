@@ -550,20 +550,6 @@ def apply_styles() -> None:
             font-weight: 600;
             margin-top: 4px;
         }
-        .danger-button-marker {
-            display: none;
-        }
-        .danger-button-marker ~ div[data-testid="stButton"] > button {
-            background: #cf7474 !important;
-            border: 1px solid #cf7474 !important;
-            color: #ffffff !important;
-            font-weight: 700;
-        }
-        .danger-button-marker ~ div[data-testid="stButton"] > button:hover {
-            background: #bf6666 !important;
-            border-color: #bf6666 !important;
-            color: #ffffff !important;
-        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -1100,7 +1086,6 @@ def render_login_management() -> None:
                 st.success("Login criado com sucesso.")
                 request_login_form_reset()
                 st.rerun()
-    st.markdown("<div class='danger-button-marker'></div>", unsafe_allow_html=True)
     if st.button("Limpar", key="clear_login_form", use_container_width=True):
         request_login_form_reset()
         st.rerun()
@@ -1265,7 +1250,6 @@ def render_new_request_form(holidays: dict[date, str]) -> None:
 
     action_submit, action_clear = st.columns(2)
     submitted = action_submit.button("Submeter pedido", key="submit_new_request", type="primary", use_container_width=True)
-    action_clear.markdown("<div class='danger-button-marker'></div>", unsafe_allow_html=True)
     cleared = action_clear.button("Limpar", key="clear_new_request_form", use_container_width=True)
     if cleared:
         request_new_request_reset()
@@ -1316,7 +1300,6 @@ def render_staff_table() -> None:
         new_active = st.checkbox("Ativo", key="staff_active")
         action_submit, action_clear = st.columns(2)
         submitted = action_submit.button("Adicionar colaborador", key="submit_staff_form", use_container_width=True)
-        action_clear.markdown("<div class='danger-button-marker'></div>", unsafe_allow_html=True)
         cleared = action_clear.button("Limpar", key="clear_staff_form", use_container_width=True)
         if cleared:
             request_staff_form_reset()
