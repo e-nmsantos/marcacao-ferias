@@ -454,6 +454,10 @@ def init_state() -> None:
         st.session_state.edit_login_staff_name = "Sem associação"
     if "edit_login_password" not in st.session_state:
         st.session_state.edit_login_password = ""
+    if "pending_edit_login_target" not in st.session_state:
+        st.session_state.pending_edit_login_target = ""
+    if "edit_login_selector" not in st.session_state:
+        st.session_state.edit_login_selector = ""
     refresh_state_from_disk(force=True)
 
 
@@ -775,6 +779,14 @@ def load_edit_login_form(username: str) -> None:
     st.session_state.edit_login_role = account.get("role", "user")
     st.session_state.edit_login_staff_name = account.get("staff_name", "") or "Sem associação"
     st.session_state.edit_login_password = ""
+
+
+def request_edit_login_load(username: str) -> None:
+    st.session_state.pending_edit_login_target = username
+
+
+def on_edit_login_selector_change() -> None:
+    request_edit_login_load(st.session_state.edit_login_selector)
 
 
 def current_user_staff() -> dict | None:
@@ -1109,13 +1121,19 @@ def render_login_management() -> None:
 
     editable_users = sorted(st.session_state.users)
     if editable_users:
+        if not st.session_state.edit_login_selector or st.session_state.edit_login_selector not in editable_users:
+            st.session_state.edit_login_selector = editable_users[0]
+            request_edit_login_load(editable_users[0])
+        if st.session_state.pending_edit_login_target:
+            load_edit_login_form(st.session_state.pending_edit_login_target)
+            st.session_state.pending_edit_login_target = ""
+
         selected_edit_username = st.selectbox(
             "Editar login",
             options=editable_users,
             key="edit_login_selector",
+            on_change=on_edit_login_selector_change,
         )
-        if st.session_state.edit_login_target != selected_edit_username:
-            load_edit_login_form(selected_edit_username)
 
         active_staff_names = sorted([person["Nome"] for person in st.session_state.staff if person.get("Ativo", True)])
         edit_staff_options = ["Sem associação"] + active_staff_names
@@ -1168,7 +1186,7 @@ def render_login_management() -> None:
                             "role": edit_role,
                             "staff_name": linked_staff_name,
                         }
-                    load_edit_login_form(selected_edit_username)
+                    request_edit_login_load(selected_edit_username)
                     st.success("Login atualizado com sucesso.")
                     st.rerun()
 
