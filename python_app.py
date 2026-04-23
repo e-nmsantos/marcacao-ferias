@@ -444,6 +444,16 @@ def init_state() -> None:
         apply_staff_form_reset()
     if "login_name" not in st.session_state:
         apply_login_form_reset()
+    if "edit_login_target" not in st.session_state:
+        st.session_state.edit_login_target = ""
+    if "edit_login_name" not in st.session_state:
+        st.session_state.edit_login_name = ""
+    if "edit_login_role" not in st.session_state:
+        st.session_state.edit_login_role = "user"
+    if "edit_login_staff_name" not in st.session_state:
+        st.session_state.edit_login_staff_name = "Sem associação"
+    if "edit_login_password" not in st.session_state:
+        st.session_state.edit_login_password = ""
     refresh_state_from_disk(force=True)
 
 
@@ -758,6 +768,15 @@ def request_login_form_reset() -> None:
     st.session_state.pending_login_reset = True
 
 
+def load_edit_login_form(username: str) -> None:
+    account = st.session_state.users.get(username, {})
+    st.session_state.edit_login_target = username
+    st.session_state.edit_login_name = account.get("name", "")
+    st.session_state.edit_login_role = account.get("role", "user")
+    st.session_state.edit_login_staff_name = account.get("staff_name", "") or "Sem associação"
+    st.session_state.edit_login_password = ""
+
+
 def current_user_staff() -> dict | None:
     user = current_user() or {}
     staff_name = normalize_employee_name(user.get("staff_name", ""))
@@ -1016,7 +1035,7 @@ def render_requests(vacations: list[dict], can_manage: bool) -> None:
 
 def render_login_management() -> None:
     st.subheader("Gestão de logins")
-    st.caption("Só administradores podem criar ou remover contas. As contas de consulta usam o perfil `viewer`.")
+    st.caption("Só administradores podem criar, editar ou remover contas. As contas de consulta usam o perfil `viewer`.")
     if st.session_state.pending_login_reset:
         apply_login_form_reset()
         st.session_state.pending_login_reset = False
@@ -1086,6 +1105,72 @@ def render_login_management() -> None:
         ]
     )
     st.dataframe(users_table, use_container_width=True, hide_index=True)
+    st.caption("As passwords atuais não podem ser visualizadas porque ficam guardadas em hash. Pode redefinir uma nova password abaixo.")
+
+    editable_users = sorted(st.session_state.users)
+    if editable_users:
+        selected_edit_username = st.selectbox(
+            "Editar login",
+            options=editable_users,
+            key="edit_login_selector",
+        )
+        if st.session_state.edit_login_target != selected_edit_username:
+            load_edit_login_form(selected_edit_username)
+
+        active_staff_names = sorted([person["Nome"] for person in st.session_state.staff if person.get("Ativo", True)])
+        edit_staff_options = ["Sem associação"] + active_staff_names
+        if st.session_state.edit_login_staff_name not in edit_staff_options:
+            st.session_state.edit_login_staff_name = "Sem associação"
+
+        with st.form("edit_login_form"):
+            edit_name = st.text_input("Nome editável", key="edit_login_name")
+            edit_role = st.selectbox(
+                "Perfil editável",
+                options=["user", "viewer", "admin"],
+                format_func=lambda value: {
+                    "admin": "Administrador",
+                    "user": "Utilizador",
+                    "viewer": "Consulta",
+                }[value],
+                key="edit_login_role",
+            )
+            edit_staff_name = st.selectbox("Colaborador associado", options=edit_staff_options, key="edit_login_staff_name")
+            edit_password = st.text_input(
+                "Nova password",
+                type="password",
+                key="edit_login_password",
+                help="Deixe em branco para manter a password atual.",
+            )
+            submitted_edit = st.form_submit_button("Guardar alterações do login", use_container_width=True)
+            if submitted_edit:
+                linked_staff_name = "" if edit_staff_name == "Sem associação" else edit_staff_name
+                if not edit_name.strip():
+                    st.error("O nome é obrigatório.")
+                elif edit_role == "user" and not linked_staff_name:
+                    st.error("As contas de utilizador têm de ficar associadas a uma pessoa do pessoal.")
+                elif edit_password and len(edit_password) < 6:
+                    st.error("A nova password deve ter pelo menos 6 caracteres.")
+                else:
+                    def apply_change(_: list[dict], __: list[dict], users: dict[str, dict]) -> None:
+                        if selected_edit_username not in users:
+                            raise DataStoreError("Login não encontrado.")
+                        users[selected_edit_username]["name"] = edit_name.strip()
+                        users[selected_edit_username]["role"] = edit_role
+                        users[selected_edit_username]["staff_name"] = linked_staff_name
+                        if edit_password:
+                            users[selected_edit_username]["password_hash"] = hash_password(edit_password)
+
+                    mutate_data(apply_change)
+                    if (current_user() or {}).get("username") == selected_edit_username:
+                        st.session_state.current_user = {
+                            **(current_user() or {}),
+                            "name": edit_name.strip(),
+                            "role": edit_role,
+                            "staff_name": linked_staff_name,
+                        }
+                    load_edit_login_form(selected_edit_username)
+                    st.success("Login atualizado com sucesso.")
+                    st.rerun()
 
     removable_users = [username for username in sorted(st.session_state.users) if username != "admin"]
     if removable_users:
