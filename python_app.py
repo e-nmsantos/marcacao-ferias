@@ -38,21 +38,25 @@ DEFAULT_USERS = {
         "password_hash": "pbkdf2_sha256$200000$Z1UP++hg6MmOpllD2XXe9A==$l5XjKw3K55JRP3UuhchkXQh6DOA5rg4JuMyx5q8EYJQ=",
         "role": "admin",
         "name": "Administrador",
+        "staff_name": "",
     },
     "maria": {
         "password_hash": "pbkdf2_sha256$200000$wORkS9D6HW7pXF72d5rkEA==$aRFSfTi4ENvaWDKl5qrPuJntyvF3BzV7UmzuobdKrwI=",
         "role": "user",
         "name": "Maria",
+        "staff_name": "",
     },
     "joao": {
         "password_hash": "pbkdf2_sha256$200000$CDyCSihP37kEQ3OpoF26lw==$I924cVDipxLShQMHQLZdYSaLpjbQPKvuBrtGomuArnk=",
         "role": "user",
         "name": "João",
+        "staff_name": "",
     },
     "consulta": {
         "password_hash": "pbkdf2_sha256$200000$YebZRordTvC6IDp4crXIsg==$+Zw8GBqoiJSRTp998XC2R85o6Tq/8cVf4gvHFnB0nJ8=",
         "role": "viewer",
         "name": "Consulta",
+        "staff_name": "",
     },
 }
 
@@ -124,10 +128,14 @@ def validate_user_account(username: str, item: dict) -> dict:
         raise DataStoreError(f"O login {normalized_username} precisa de password.")
     if not verify_password("__validation_probe__", password_hash) and not password_hash.startswith("pbkdf2_sha256$"):
         raise DataStoreError(f"Password inválida para login {normalized_username}.")
+    staff_name = normalize_employee_name(str(item.get("staff_name", "")).strip())
+    if role == "user" and not staff_name:
+        raise DataStoreError(f"O login {normalized_username} precisa de um colaborador associado.")
     return {
         "password_hash": password_hash,
         "role": role,
         "name": name,
+        "staff_name": staff_name,
     }
 
 
@@ -494,6 +502,17 @@ def apply_styles() -> None:
             padding: 16px;
             box-shadow: 0 12px 30px rgba(15, 23, 42, 0.04);
         }
+        .brand-footer {
+            margin-top: 18px;
+            padding: 14px 18px;
+            display: inline-block;
+            border-radius: 14px;
+            background: #0f172a;
+            color: #ffffff;
+            font-size: 14px;
+            font-weight: 500;
+            box-shadow: 0 12px 24px rgba(15, 23, 42, 0.16);
+        }
         .calendar-hint { color: #64748b; font-size: 12px; margin-bottom: 8px; }
         .calendar-meta {
             display: inline-block;
@@ -741,6 +760,14 @@ def request_login_form_reset() -> None:
     st.session_state.pending_login_reset = True
 
 
+def current_user_staff() -> dict | None:
+    user = current_user() or {}
+    staff_name = normalize_employee_name(user.get("staff_name", ""))
+    if not staff_name:
+        return None
+    return next((person for person in st.session_state.staff if person["Nome"] == staff_name), None)
+
+
 def render_data_status() -> None:
     if st.session_state.get("data_error"):
         st.error(
@@ -767,6 +794,7 @@ def login_screen() -> None:
                         "username": username.strip().lower(),
                         "name": account["name"],
                         "role": account["role"],
+                        "staff_name": account.get("staff_name", ""),
                     }
                     st.rerun()
                 st.error("Credenciais inválidas.")
@@ -996,6 +1024,7 @@ def render_login_management() -> None:
         st.session_state.pending_login_reset = False
 
     with st.form("add_login_form"):
+        active_staff_names = sorted([person["Nome"] for person in st.session_state.staff if person.get("Ativo", True)])
         new_name = st.text_input("Nome", key="login_name")
         new_username = st.text_input("Utilizador", key="login_username")
         new_password = st.text_input("Password", type="password", key="login_password")
@@ -1009,9 +1038,12 @@ def render_login_management() -> None:
             }[value],
             key="login_role",
         )
+        staff_options = ["Sem associação"] + active_staff_names
+        selected_staff_name = st.selectbox("Colaborador associado", options=staff_options)
         submitted = st.form_submit_button("Criar login", use_container_width=True)
         if submitted:
             username = new_username.strip().lower()
+            linked_staff_name = "" if selected_staff_name == "Sem associação" else selected_staff_name
             if not new_name.strip():
                 st.error("O nome é obrigatório.")
             elif not username:
@@ -1020,11 +1052,14 @@ def render_login_management() -> None:
                 st.error("O utilizador não pode ter espaços.")
             elif len(new_password) < 6:
                 st.error("A password deve ter pelo menos 6 caracteres.")
+            elif new_role == "user" and not linked_staff_name:
+                st.error("As contas de utilizador têm de ficar associadas a uma pessoa do pessoal.")
             else:
                 new_account = {
                     "name": new_name.strip(),
                     "role": new_role,
                     "password_hash": hash_password(new_password),
+                    "staff_name": linked_staff_name,
                 }
 
                 def apply_change(_: list[dict], __: list[dict], users: dict[str, dict]) -> None:
@@ -1047,6 +1082,7 @@ def render_login_management() -> None:
                 "Utilizador": username,
                 "Nome": account["name"],
                 "Perfil": {"admin": "Administrador", "user": "Utilizador", "viewer": "Consulta"}[account["role"]],
+                "Colaborador": account.get("staff_name", "") or "-",
             }
             for username, account in sorted(st.session_state.users.items())
         ]
@@ -1088,7 +1124,8 @@ def render_new_request_form(holidays: dict[date, str]) -> None:
         employee_name = st.selectbox("Colaborador", options=active_staff_names)
         selected_staff = next((p for p in st.session_state.staff if p["Nome"] == employee_name), None)
     elif is_user():
-        employee_name = (current_user() or {}).get("name", "")
+        selected_staff = current_user_staff()
+        employee_name = selected_staff["Nome"] if selected_staff else (current_user() or {}).get("staff_name", "")
         st.text_input("Colaborador", value=employee_name, disabled=True)
     else:
         employee_name = st.text_input("Nome do colaborador")
@@ -1135,6 +1172,9 @@ def render_new_request_form(holidays: dict[date, str]) -> None:
     if submitted:
         if not employee_name.strip():
             st.error("Preencha o nome do colaborador.")
+            return
+        if is_user() and not selected_staff:
+            st.error("A tua conta precisa de estar associada a uma pessoa do pessoal.")
             return
         team_name = selected_staff.get("Equipa", "") if selected_staff else ""
         new_request = {
@@ -1490,6 +1530,10 @@ def render_filters() -> tuple[str, str, int]:
     return team_filter, status_filter, st.session_state.conflict_limit
 
 
+def render_brand_footer() -> None:
+    st.markdown(f"<div class='brand-footer'>© {date.today().year} Nuno Santos</div>", unsafe_allow_html=True)
+
+
 def main() -> None:
     st.set_page_config(page_title="Gestão de Férias", page_icon="📅", layout="wide")
     init_state()
@@ -1543,6 +1587,7 @@ def main() -> None:
         st.info("Secção indisponível para o perfil atual.")
 
     st.markdown("</div>", unsafe_allow_html=True)
+    render_brand_footer()
 
 
 if __name__ == "__main__":
