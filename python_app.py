@@ -1,350 +1,43 @@
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
 import json
-import os
-import sqlite3
-import time
 from datetime import date, datetime, timedelta
-from pathlib import Path
 from uuid import uuid4
 
 import pandas as pd
 import streamlit as st
 
-DATA_VERSION = 2
-DATA_FILE = Path(__file__).with_name("data_store.json")
-DB_FILE = Path(__file__).with_name("ferias.db")
-BACKUP_DIR = Path(__file__).with_name("backups")
-LOCK_FILE = Path(__file__).with_name("data_store.lock")
-PASSWORD_ITERATIONS = 200_000
-
-ABSENCE_TYPES = ["Férias", "Meio-dia", "Compensação", "Outro"]
-STATUS_OPTIONS = ["all", "pending", "approved", "rejected"]
-STATUS_LABELS = {
-    "all": "Todos",
-    "pending": "Pendente",
-    "approved": "Aprovado",
-    "rejected": "Rejeitado",
-}
-NAV_ADMIN = ["Calendário", "Pedidos", "Relatórios", "Pessoal", "Logins", "Backup"]
-NAV_USER = ["Calendário", "Meus Pedidos"]
-NAV_VIEWER = ["Calendário", "Pedidos", "Relatórios"]
-
-DEFAULT_USERS = {
-    "admin": {
-        "password_hash": "pbkdf2_sha256$200000$Z1UP++hg6MmOpllD2XXe9A==$l5XjKw3K55JRP3UuhchkXQh6DOA5rg4JuMyx5q8EYJQ=",
-        "role": "admin",
-        "name": "Administrador",
-        "staff_name": "",
-    },
-    "maria": {
-        "password_hash": "pbkdf2_sha256$200000$wORkS9D6HW7pXF72d5rkEA==$aRFSfTi4ENvaWDKl5qrPuJntyvF3BzV7UmzuobdKrwI=",
-        "role": "user",
-        "name": "Maria",
-        "staff_name": "",
-    },
-    "joao": {
-        "password_hash": "pbkdf2_sha256$200000$CDyCSihP37kEQ3OpoF26lw==$I924cVDipxLShQMHQLZdYSaLpjbQPKvuBrtGomuArnk=",
-        "role": "user",
-        "name": "João",
-        "staff_name": "",
-    },
-    "consulta": {
-        "password_hash": "pbkdf2_sha256$200000$YebZRordTvC6IDp4crXIsg==$+Zw8GBqoiJSRTp998XC2R85o6Tq/8cVf4gvHFnB0nJ8=",
-        "role": "viewer",
-        "name": "Consulta",
-        "staff_name": "",
-    },
-}
-
-EMPLOYEE_NAME_ALIASES = {
-    "MR": "Mónica Romão",
-}
-
-MUNICIPAL_HOLIDAYS = {
-    "Nenhum": None,
-    "Lisboa": (6, 13, "Santo António"),
-    "Porto": (6, 24, "São João"),
-    "Braga": (12, 8, "Imaculada Conceição (Municipal)"),
-    "Coimbra": (7, 4, "Rainha Santa Isabel"),
-}
-
-
-class DataStoreError(RuntimeError):
-    pass
-
-
-def serialize_date(value: date) -> str:
-    return value.isoformat()
-
-
-def serialize_dt(value: datetime) -> str:
-    return value.isoformat()
-
-
-def build_password_hash(password: str, *, salt_b64: str, iterations: int = PASSWORD_ITERATIONS) -> str:
-    salt = base64.b64decode(salt_b64)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
-    return f"pbkdf2_sha256${iterations}${salt_b64}${base64.b64encode(digest).decode('ascii')}"
-
-
-def hash_password(password: str) -> str:
-    salt = base64.b64encode(os.urandom(16)).decode("ascii")
-    return build_password_hash(password, salt_b64=salt, iterations=PASSWORD_ITERATIONS)
-
-
-def verify_password(password: str, stored_hash: str) -> bool:
-    try:
-        algorithm, iterations_text, salt_b64, _ = stored_hash.split("$", 3)
-        if algorithm != "pbkdf2_sha256":
-            return False
-        expected_hash = build_password_hash(password, salt_b64=salt_b64, iterations=int(iterations_text))
-    except Exception:
-        return False
-    return hmac.compare_digest(expected_hash, stored_hash)
-
-
-def normalize_employee_name(name: str) -> str:
-    return EMPLOYEE_NAME_ALIASES.get(name.strip(), name.strip())
-
-
-def validate_user_account(username: str, item: dict) -> dict:
-    if not isinstance(item, dict):
-        raise DataStoreError("Conta de login inválida.")
-    normalized_username = username.strip().lower()
-    if not normalized_username:
-        raise DataStoreError("Cada login precisa de utilizador.")
-    role = str(item.get("role", "")).strip().lower()
-    if role not in {"admin", "user", "viewer"}:
-        raise DataStoreError(f"Role inválida para login {normalized_username}.")
-    name = str(item.get("name", "")).strip()
-    if not name:
-        raise DataStoreError(f"O login {normalized_username} precisa de um nome.")
-    password_hash = str(item.get("password_hash", "")).strip()
-    if not password_hash:
-        raise DataStoreError(f"O login {normalized_username} precisa de password.")
-    if not verify_password("__validation_probe__", password_hash) and not password_hash.startswith("pbkdf2_sha256$"):
-        raise DataStoreError(f"Password inválida para login {normalized_username}.")
-    staff_name = normalize_employee_name(str(item.get("staff_name", "")).strip())
-    return {
-        "password_hash": password_hash,
-        "role": role,
-        "name": name,
-        "staff_name": staff_name,
-    }
-
-
-def validate_users_map(items: object) -> dict[str, dict]:
-    source = DEFAULT_USERS if items is None else items
-    if not isinstance(source, dict):
-        raise DataStoreError("A lista de logins está num formato inválido.")
-    cleaned: dict[str, dict] = {}
-    for username, raw in source.items():
-        normalized_username = str(username).strip().lower()
-        cleaned[normalized_username] = validate_user_account(normalized_username, raw)
-    if "admin" not in cleaned:
-        raise DataStoreError("Tem de existir pelo menos uma conta administradora.")
-    return cleaned
-
-
-def validate_staff_member(item: dict) -> dict:
-    if not isinstance(item, dict):
-        raise DataStoreError("Registo de colaborador inválido.")
-    name = normalize_employee_name(str(item.get("Nome", "")).strip())
-    if not name:
-        raise DataStoreError("Cada colaborador precisa de um nome.")
-    return {
-        "Nome": name,
-        "Equipa": str(item.get("Equipa", "")).strip(),
-        "Função": str(item.get("Função", item.get("Funcao", ""))).strip(),
-        "Ativo": bool(item.get("Ativo", True)),
-    }
-
-
-def validate_staff_list(items: object) -> list[dict]:
-    if items is None:
-        return []
-    if not isinstance(items, list):
-        raise DataStoreError("A lista de colaboradores está num formato inválido.")
-    cleaned: list[dict] = []
-    seen: set[str] = set()
-    for raw in items:
-        staff_member = validate_staff_member(raw)
-        normalized_name = staff_member["Nome"].lower()
-        if normalized_name in seen:
-            raise DataStoreError(f"Colaborador duplicado no armazenamento: {staff_member['Nome']}.")
-        seen.add(normalized_name)
-        cleaned.append(staff_member)
-    return cleaned
-
-
-def deserialize_vacation(item: dict) -> dict:
-    if not isinstance(item, dict):
-        raise DataStoreError("Pedido de férias inválido.")
-    out = dict(item)
-    out["start_date"] = date.fromisoformat(item["start_date"])
-    out["end_date"] = date.fromisoformat(item["end_date"])
-    out["requested_at"] = datetime.fromisoformat(item["requested_at"])
-    if out["end_date"] < out["start_date"]:
-        raise DataStoreError("Pedido com intervalo de datas inválido.")
-    if out.get("status") not in {"pending", "approved", "rejected"}:
-        raise DataStoreError("Pedido com estado inválido.")
-    out["employee_name"] = normalize_employee_name(str(item.get("employee_name", "")).strip())
-    if not out["employee_name"]:
-        raise DataStoreError("Pedido sem nome de colaborador.")
-    out["half_day"] = bool(item.get("half_day", False))
-    out["created_by"] = str(item.get("created_by", "")).strip()
-    out["team"] = str(item.get("team", "")).strip()
-    out["absence_type"] = str(item.get("absence_type", "Férias")).strip() or "Férias"
-    out["replacement_contact"] = str(item.get("replacement_contact", "")).strip()
-    out["reason"] = str(item.get("reason", "")).strip()
-    if out["employee_name"] == "Mónica Romão" and not out["team"]:
-        out["team"] = "Apoio"
-    return out
-
-
-def serialize_vacation(item: dict) -> dict:
-    return {
-        **item,
-        "start_date": serialize_date(item["start_date"]),
-        "end_date": serialize_date(item["end_date"]),
-        "requested_at": serialize_dt(item["requested_at"]),
-    }
-
-
-def parse_payload(payload: object) -> tuple[list[dict], list[dict], dict[str, dict]]:
-    if payload is None:
-        return [], [], validate_users_map(None)
-    if not isinstance(payload, dict):
-        raise DataStoreError("O ficheiro de dados não contém um objeto JSON válido.")
-    vacations_raw = payload.get("vacations", [])
-    if not isinstance(vacations_raw, list):
-        raise DataStoreError("A lista de pedidos está num formato inválido.")
-    vacations = [deserialize_vacation(item) for item in vacations_raw]
-    staff = validate_staff_list(payload.get("staff", []))
-    users = validate_users_map(payload.get("users"))
-    return vacations, staff, users
-
-
-def load_json_data() -> tuple[list[dict], list[dict], dict[str, dict]]:
-    if not DATA_FILE.exists():
-        return [], [], validate_users_map(None)
-
-    try:
-        payload = json.loads(DATA_FILE.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise DataStoreError(f"Não foi possível ler {DATA_FILE.name}: JSON inválido.") from exc
-    except OSError as exc:
-        raise DataStoreError(f"Não foi possível ler {DATA_FILE.name}.") from exc
-    try:
-        return parse_payload(payload)
-    except Exception as exc:
-        if isinstance(exc, DataStoreError):
-            raise
-        raise DataStoreError("Estrutura de dados inválida no armazenamento.") from exc
-
-
-def connect_db() -> sqlite3.Connection:
-    connection = sqlite3.connect(DB_FILE)
-    connection.row_factory = sqlite3.Row
-    return connection
-
-
-def init_db() -> None:
-    with connect_db() as connection:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS app_state (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                payload TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        connection.commit()
-
-
-def load_data() -> tuple[list[dict], list[dict], dict[str, dict]]:
-    init_db()
-    with connect_db() as connection:
-        row = connection.execute("SELECT payload FROM app_state WHERE id = 1").fetchone()
-    if row is not None:
-        try:
-            return parse_payload(json.loads(row["payload"]))
-        except Exception as exc:
-            if isinstance(exc, DataStoreError):
-                raise
-            raise DataStoreError("Estrutura de dados inválida na base de dados.") from exc
-    if DATA_FILE.exists():
-        vacations, staff, users = load_json_data()
-        save_data(vacations, staff, users)
-        return vacations, staff, users
-    defaults = ([], [], validate_users_map(None))
-    save_data(*defaults)
-    return defaults
-
-
-def build_data_payload(vacations: list[dict], staff: list[dict], users: dict[str, dict]) -> dict:
-    return {
-        "version": DATA_VERSION,
-        "exported_at": datetime.now().isoformat(),
-        "vacations": [serialize_vacation(item) for item in vacations],
-        "staff": staff,
-        "users": users,
-    }
-
-
-def save_data(
-    vacations: list[dict] | None = None,
-    staff: list[dict] | None = None,
-    users: dict[str, dict] | None = None,
-) -> None:
-    vacations = st.session_state.vacations if vacations is None else vacations
-    staff = st.session_state.staff if staff is None else staff
-    users = st.session_state.users if users is None else users
-    payload = build_data_payload(vacations, staff, users)
-    payload_text = json.dumps(payload, ensure_ascii=False, indent=2)
-    init_db()
-    with connect_db() as connection:
-        connection.execute(
-            """
-            INSERT INTO app_state (id, payload, updated_at)
-            VALUES (1, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                payload = excluded.payload,
-                updated_at = excluded.updated_at
-            """,
-            (payload_text, datetime.now().isoformat()),
-        )
-        connection.commit()
-
-
-def acquire_data_lock(timeout_seconds: float = 10.0, poll_interval: float = 0.1) -> None:
-    deadline = time.time() + timeout_seconds
-    while True:
-        try:
-            fd = os.open(str(LOCK_FILE), os.O_CREAT | os.O_EXCL | os.O_RDWR)
-            os.write(fd, str(os.getpid()).encode("ascii", "ignore"))
-            os.close(fd)
-            return
-        except FileExistsError:
-            try:
-                age_seconds = time.time() - LOCK_FILE.stat().st_mtime
-                if age_seconds > timeout_seconds:
-                    LOCK_FILE.unlink(missing_ok=True)
-                    continue
-            except FileNotFoundError:
-                continue
-            if time.time() >= deadline:
-                raise DataStoreError("Não foi possível obter acesso exclusivo ao armazenamento de dados.")
-            time.sleep(poll_interval)
-
-
-def release_data_lock() -> None:
-    LOCK_FILE.unlink(missing_ok=True)
+from vacation_app.auth import DataStoreError, hash_password, normalize_employee_name, verify_password
+from vacation_app.calendar_utils import (
+    calculate_business_days,
+    calculate_days,
+    format_date,
+    month_name_pt,
+    portugal_holidays,
+)
+from vacation_app.constants import (
+    ABSENCE_TYPES,
+    BACKUP_DIR,
+    DATA_FILE,
+    DB_FILE,
+    NAV_ADMIN,
+    NAV_USER,
+    NAV_VIEWER,
+    STATUS_LABELS,
+    STATUS_OPTIONS,
+)
+from vacation_app.reports import build_report_rows, report_period_label
+from vacation_app.storage import (
+    acquire_data_lock,
+    build_data_payload,
+    init_db,
+    load_data,
+    parse_payload,
+    release_data_lock,
+    save_data,
+    validate_staff_list,
+    validate_users_map,
+)
 
 
 def sync_state(vacations: list[dict], staff: list[dict], users: dict[str, dict]) -> None:
@@ -358,7 +51,7 @@ def sync_state(vacations: list[dict], staff: list[dict], users: dict[str, dict])
 def refresh_state_from_disk(force: bool = False) -> None:
     if not DB_FILE.exists() and not DATA_FILE.exists():
         if force or "vacations" not in st.session_state:
-            sync_state([], [], validate_users_map(None))
+            sync_state([], [], validate_users_map(None, []))
         return
     init_db()
     current_mtime = DB_FILE.stat().st_mtime_ns if DB_FILE.exists() else None
@@ -377,17 +70,17 @@ def mutate_data(mutator) -> None:
     payload = {
         "vacations": [],
         "staff": [],
-        "users": validate_users_map(None),
+        "users": validate_users_map(None, []),
     }
     try:
         has_storage = DB_FILE.exists() or DATA_FILE.exists()
-        vacations, staff, users = load_data() if has_storage else ([], [], validate_users_map(None))
+        vacations, staff, users = load_data() if has_storage else ([], [], validate_users_map(None, []))
         payload["vacations"] = [dict(item) for item in vacations]
         payload["staff"] = [dict(item) for item in staff]
         payload["users"] = {username: dict(item) for username, item in users.items()}
         mutator(payload["vacations"], payload["staff"], payload["users"])
         validated_staff = validate_staff_list(payload["staff"])
-        validated_users = validate_users_map(payload["users"])
+        validated_users = validate_users_map(payload["users"], validated_staff)
         save_data(payload["vacations"], validated_staff, validated_users)
         sync_state(payload["vacations"], validated_staff, validated_users)
     finally:
@@ -400,7 +93,7 @@ def init_state() -> None:
     if "staff" not in st.session_state:
         st.session_state.staff = []
     if "users" not in st.session_state:
-        st.session_state.users = validate_users_map(None)
+        st.session_state.users = validate_users_map(None, [])
     if "data_error" not in st.session_state:
         st.session_state.data_error = None
     if "data_mtime" not in st.session_state:
@@ -568,74 +261,6 @@ def is_user() -> bool:
     return bool(current_user()) and current_user().get("role") == "user"
 
 
-def month_name_pt(month: int) -> str:
-    months = [
-        "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-        "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
-    ]
-    return months[month - 1]
-
-
-def easter_date(year: int) -> date:
-    a = year % 19
-    b = year // 100
-    c = year % 100
-    d = b // 4
-    e = b % 4
-    f = (b + 8) // 25
-    g = (b - f + 1) // 3
-    h = (19 * a + b - d - g + 15) % 30
-    i = c // 4
-    k = c % 4
-    l = (32 + 2 * e + 2 * i - h - k) % 7
-    m = (a + 11 * h + 22 * l) // 451
-    month = (h + l - 7 * m + 114) // 31
-    day = ((h + l - 7 * m + 114) % 31) + 1
-    return date(year, month, day)
-
-
-def portugal_holidays(year: int, municipality: str) -> dict[date, str]:
-    easter = easter_date(year)
-    holidays = {
-        date(year, 1, 1): "Ano Novo",
-        easter - timedelta(days=2): "Sexta-feira Santa",
-        easter: "Páscoa",
-        date(year, 4, 25): "Dia da Liberdade",
-        date(year, 5, 1): "Dia do Trabalhador",
-        easter + timedelta(days=60): "Corpo de Deus",
-        date(year, 6, 10): "Dia de Portugal",
-        date(year, 8, 15): "Assunção de Nossa Senhora",
-        date(year, 10, 5): "Implantação da República",
-        date(year, 11, 1): "Todos os Santos",
-        date(year, 12, 1): "Restauração da Independência",
-        date(year, 12, 8): "Imaculada Conceição",
-        date(year, 12, 25): "Natal",
-    }
-    municipal = MUNICIPAL_HOLIDAYS.get(municipality)
-    if municipal:
-        month, day, label = municipal
-        holidays[date(year, month, day)] = label
-    return holidays
-
-
-def format_date(value: date) -> str:
-    return value.strftime("%d/%m/%Y")
-
-
-def calculate_days(start: date, end: date) -> int:
-    return (end - start).days + 1
-
-
-def calculate_business_days(start: date, end: date, holidays: dict[date, str]) -> int:
-    current = start
-    total = 0
-    while current <= end:
-        if current.weekday() < 5 and current not in holidays:
-            total += 1
-        current += timedelta(days=1)
-    return total
-
-
 def vacation_matches_filters(vacation: dict, team_filter: str, status_filter: str, scope: str) -> bool:
     if status_filter != "all" and vacation["status"] != status_filter:
         return False
@@ -658,6 +283,12 @@ def update_vacation_status(vacation_id: str, new_status: str) -> None:
         for vacation in vacations:
             if vacation["id"] == vacation_id:
                 vacation["status"] = new_status
+                if new_status == "approved":
+                    vacation["approved_at"] = datetime.now()
+                    vacation["approved_by"] = (current_user() or {}).get("username", "")
+                else:
+                    vacation["approved_at"] = None
+                    vacation["approved_by"] = ""
                 return
         raise DataStoreError("Pedido não encontrado para atualizar.")
 
@@ -781,6 +412,35 @@ def current_user_staff() -> dict | None:
     if not staff_name:
         return None
     return next((person for person in st.session_state.staff if person["Nome"] == staff_name), None)
+
+
+def linked_accounts_for_staff(staff_name: str, users: dict[str, dict] | None = None) -> list[str]:
+    source = st.session_state.users if users is None else users
+    return sorted(
+        username
+        for username, account in source.items()
+        if normalize_employee_name(account.get("staff_name", "")) == staff_name
+    )
+
+
+def linked_vacations_for_staff(staff_name: str, vacations: list[dict] | None = None) -> list[dict]:
+    source = st.session_state.vacations if vacations is None else vacations
+    return [vacation for vacation in source if normalize_employee_name(vacation["employee_name"]) == staff_name]
+
+
+def ensure_staff_removal_allowed(staff_name: str, users: dict[str, dict] | None = None, vacations: list[dict] | None = None) -> None:
+    linked_users = linked_accounts_for_staff(staff_name, users)
+    linked_requests = linked_vacations_for_staff(staff_name, vacations)
+    if linked_users or linked_requests:
+        pieces = []
+        if linked_users:
+            pieces.append(f"logins associados: {', '.join(linked_users)}")
+        if linked_requests:
+            pieces.append(f"pedidos associados: {len(linked_requests)}")
+        details = " | ".join(pieces)
+        raise DataStoreError(
+            f"Não pode remover ou renomear {staff_name} enquanto existirem ligações ativas. {details}."
+        )
 
 
 def render_data_status() -> None:
@@ -1275,6 +935,8 @@ def render_new_request_form(holidays: dict[date, str]) -> None:
             "replacement_contact": replacement_contact.strip(),
             "reason": reason.strip(),
             "requested_at": datetime.now(),
+            "approved_at": None,
+            "approved_by": "",
         }
 
         def apply_change(vacations: list[dict], _: list[dict], __: dict[str, dict]) -> None:
@@ -1330,7 +992,8 @@ def render_staff_table() -> None:
         if st.session_state.staff:
             remove_name = st.selectbox("Remover colaborador", options=[p["Nome"] for p in st.session_state.staff])
             if st.button("Remover", type="secondary"):
-                def apply_change(_: list[dict], staff: list[dict], __: dict[str, dict]) -> None:
+                def apply_change(vacations: list[dict], staff: list[dict], users: dict[str, dict]) -> None:
+                    ensure_staff_removal_allowed(remove_name, users, vacations)
                     updated = [p for p in staff if p["Nome"] != remove_name]
                     if len(updated) == len(staff):
                         raise DataStoreError("Colaborador não encontrado para remover.")
@@ -1368,56 +1031,16 @@ def render_staff_table() -> None:
             seen.add(name.lower())
             cleaned.append({"Nome": name, "Equipa": str(row.get("Equipa", "")).strip(), "Função": str(row.get("Função", "")).strip(), "Ativo": bool(row.get("Ativo", True))})
 
-        def apply_change(_: list[dict], staff: list[dict], __: dict[str, dict]) -> None:
+        def apply_change(vacations: list[dict], staff: list[dict], users: dict[str, dict]) -> None:
+            current_names = {member["Nome"] for member in staff}
+            new_names = {member["Nome"] for member in cleaned}
+            for removed_name in sorted(current_names - new_names):
+                ensure_staff_removal_allowed(removed_name, users, vacations)
             staff[:] = cleaned
 
         mutate_data(apply_change)
         st.success("Tabela de pessoal atualizada.")
         st.rerun()
-
-
-def report_period_label(year: int, month: int) -> str:
-    if month == 0:
-        return str(year)
-    return f"{month_name_pt(month)} {year}"
-
-
-def report_rows(
-    vacations: list[dict], holidays: dict[date, str], year: int, month: int, team: str, statuses: list[str]
-) -> list[dict]:
-    rows: list[dict] = []
-    for vacation in vacations:
-        if vacation["status"] not in statuses:
-            continue
-        if team != "Todas" and vacation.get("team", "") != team:
-            continue
-        if month == 0:
-            if vacation["start_date"].year != year and vacation["end_date"].year != year:
-                continue
-        else:
-            period_start = date(year, month, 1)
-            period_end = date(year + 1, 1, 1) - timedelta(days=1) if month == 12 else date(year, month + 1, 1) - timedelta(days=1)
-            if vacation["end_date"] < period_start or vacation["start_date"] > period_end:
-                continue
-        total_days = calculate_days(vacation["start_date"], vacation["end_date"])
-        business_days = calculate_business_days(vacation["start_date"], vacation["end_date"], holidays)
-        rows.append(
-            {
-                "Colaborador": vacation["employee_name"],
-                "Equipa": vacation.get("team", ""),
-                "Estado": STATUS_LABELS.get(vacation["status"], vacation["status"]),
-                "Tipo": vacation.get("absence_type", "Férias"),
-                "Início": format_date(vacation["start_date"]),
-                "Fim": format_date(vacation["end_date"]),
-                "Dias": total_days,
-                "Dias úteis": business_days,
-                "Substituto": vacation.get("replacement_contact", ""),
-                "Comentário": vacation.get("reason", ""),
-                "Aprovado em": vacation["requested_at"].strftime("%d/%m/%Y %H:%M"),
-            }
-        )
-    rows.sort(key=lambda item: (item["Colaborador"], item["Início"]))
-    return rows
 
 
 def render_reports() -> None:
@@ -1469,8 +1092,7 @@ def render_reports() -> None:
     if not selected_statuses:
         st.info("Escolhe pelo menos um estado para gerar o relatório.")
         return
-    holidays = portugal_holidays(selected_year, "Nenhum")
-    rows = report_rows(report_vacations, holidays, selected_year, selected_month, selected_team, selected_statuses)
+    rows = build_report_rows(report_vacations, {}, selected_year, selected_month, selected_team, selected_statuses)
     if not rows:
         st.info("Não existem registos para os filtros escolhidos.")
         return
