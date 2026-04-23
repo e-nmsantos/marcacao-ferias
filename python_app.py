@@ -1248,10 +1248,12 @@ def report_period_label(year: int, month: int) -> str:
     return f"{month_name_pt(month)} {year}"
 
 
-def approved_report_rows(vacations: list[dict], holidays: dict[date, str], year: int, month: int, team: str) -> list[dict]:
+def report_rows(
+    vacations: list[dict], holidays: dict[date, str], year: int, month: int, team: str, statuses: list[str]
+) -> list[dict]:
     rows: list[dict] = []
     for vacation in vacations:
-        if vacation["status"] != "approved":
+        if vacation["status"] not in statuses:
             continue
         if team != "Todas" and vacation.get("team", "") != team:
             continue
@@ -1269,6 +1271,7 @@ def approved_report_rows(vacations: list[dict], holidays: dict[date, str], year:
             {
                 "Colaborador": vacation["employee_name"],
                 "Equipa": vacation.get("team", ""),
+                "Estado": STATUS_LABELS.get(vacation["status"], vacation["status"]),
                 "Tipo": vacation.get("absence_type", "Férias"),
                 "Início": format_date(vacation["start_date"]),
                 "Fim": format_date(vacation["end_date"]),
@@ -1285,29 +1288,29 @@ def approved_report_rows(vacations: list[dict], holidays: dict[date, str], year:
 
 def render_reports() -> None:
     st.subheader("Relatórios")
-    st.caption("Exportação de férias aprovadas para partilha com a chefia e controlo interno da equipa.")
+    st.caption("Exportação de férias autorizadas e pendentes para partilha com a chefia e controlo interno da equipa.")
 
-    approved_vacations = [vacation for vacation in st.session_state.vacations if vacation["status"] == "approved"]
-    if not approved_vacations:
-        st.info("Ainda não existem férias aprovadas para relatório.")
+    report_vacations = [vacation for vacation in st.session_state.vacations if vacation["status"] in {"approved", "pending"}]
+    if not report_vacations:
+        st.info("Ainda não existem férias aprovadas ou pendentes para relatório.")
         return
 
-    teams = sorted({vacation.get("team", "").strip() for vacation in approved_vacations if vacation.get("team", "").strip()})
+    teams = sorted({vacation.get("team", "").strip() for vacation in report_vacations if vacation.get("team", "").strip()})
     team_options = ["Apoio"] + [team for team in teams if team != "Apoio"] if "Apoio" in teams else teams
     team_options = ["Todas"] + team_options
     current_year = date.today().year
     available_years = sorted(
         {
             vacation["start_date"].year
-            for vacation in approved_vacations
+            for vacation in report_vacations
         }
-        | {vacation["end_date"].year for vacation in approved_vacations},
+        | {vacation["end_date"].year for vacation in report_vacations},
         reverse=True,
     )
     if current_year not in available_years:
         available_years.insert(0, current_year)
 
-    filter_col1, filter_col2, filter_col3 = st.columns(3)
+    filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
     with filter_col1:
         default_team_index = team_options.index("Apoio") if "Apoio" in team_options else 0
         selected_team = st.selectbox("Equipa do relatório", options=team_options, index=default_team_index)
@@ -1321,32 +1324,46 @@ def render_reports() -> None:
             format_func=lambda value: "Ano completo" if value == 0 else month_name_pt(value),
             index=0,
         )
+    with filter_col4:
+        selected_statuses = st.multiselect(
+            "Estados",
+            options=["approved", "pending"],
+            default=["approved", "pending"],
+            format_func=lambda value: STATUS_LABELS[value],
+        )
 
+    if not selected_statuses:
+        st.info("Escolhe pelo menos um estado para gerar o relatório.")
+        return
     holidays = portugal_holidays(selected_year, "Nenhum")
-    rows = approved_report_rows(approved_vacations, holidays, selected_year, selected_month, selected_team)
+    rows = report_rows(report_vacations, holidays, selected_year, selected_month, selected_team, selected_statuses)
     if not rows:
-        st.info("Não existem férias aprovadas para os filtros escolhidos.")
+        st.info("Não existem registos para os filtros escolhidos.")
         return
 
     detail_df = pd.DataFrame(rows)
     summary_df = (
-        detail_df.groupby(["Colaborador", "Equipa"], as_index=False)[["Dias", "Dias úteis"]]
+        detail_df.groupby(["Colaborador", "Equipa", "Estado"], as_index=False)[["Dias", "Dias úteis"]]
         .sum()
-        .sort_values(["Equipa", "Colaborador"])
+        .sort_values(["Equipa", "Colaborador", "Estado"])
     )
 
-    report_title = f"Férias aprovadas - {selected_team} - {report_period_label(selected_year, selected_month)}"
+    selected_status_labels = ", ".join(STATUS_LABELS[status] for status in selected_statuses)
+    report_title = f"Férias {selected_status_labels.lower()} - {selected_team} - {report_period_label(selected_year, selected_month)}"
     st.markdown(f"**{report_title}**")
 
-    stat1, stat2, stat3 = st.columns(3)
+    approved_count = int((detail_df["Estado"] == STATUS_LABELS["approved"]).sum())
+    pending_count = int((detail_df["Estado"] == STATUS_LABELS["pending"]).sum())
+    stat1, stat2, stat3, stat4 = st.columns(4)
     stat1.info(f"Registos: {len(detail_df)}")
     stat2.info(f"Dias totais: {int(detail_df['Dias'].sum())}")
     stat3.info(f"Dias úteis: {int(detail_df['Dias úteis'].sum())}")
+    stat4.info(f"Aprovados: {approved_count} | Pendentes: {pending_count}")
 
     st.markdown("**Resumo por colaborador**")
     st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
-    st.markdown("**Detalhe aprovado**")
+    st.markdown("**Detalhe do relatório**")
     st.dataframe(detail_df, use_container_width=True, hide_index=True)
 
     csv_data = detail_df.to_csv(index=False).encode("utf-8-sig")
