@@ -26,6 +26,7 @@ from vacation_app.constants import (
     STATUS_LABELS,
     STATUS_OPTIONS,
 )
+from vacation_app.excel_export import build_margarida_workbook
 from vacation_app.reports import build_report_rows, report_period_label
 from vacation_app.storage import (
     acquire_data_lock,
@@ -1158,6 +1159,37 @@ def render_reports() -> None:
         mime="text/csv",
         use_container_width=True,
     )
+
+    approved_map_vacations = [
+        vacation
+        for vacation in st.session_state.vacations
+        if vacation["status"] == "approved"
+        and (selected_team == "Todas" or vacation.get("team", "") == selected_team)
+        and (vacation["start_date"].year == selected_year or vacation["end_date"].year == selected_year)
+    ]
+    st.markdown("**Mapa anual Margarida**")
+    st.caption("Exporta um Excel anual no estilo do mapa de férias, preenchido apenas com férias aprovadas.")
+    if approved_map_vacations:
+        try:
+            margarida_xlsx = build_margarida_workbook(
+                st.session_state.vacations,
+                st.session_state.staff,
+                year=selected_year,
+                team=selected_team,
+                title_name="Margarida",
+            )
+        except RuntimeError:
+            st.info("Para gerar o mapa Excel na cloud é preciso instalar a dependência `openpyxl`.")
+        else:
+            st.download_button(
+                "Descarregar mapa Margarida (.xlsx)",
+                data=margarida_xlsx,
+                file_name=f"margarida_mapa_ferias_{selected_team.lower()}_{selected_year}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+    else:
+        st.info("Não existem férias aprovadas para gerar o mapa anual com os filtros atuais.")
 
     st.markdown("**Detalhe completo do relatório**")
     st.dataframe(detail_df, use_container_width=True, hide_index=True)
