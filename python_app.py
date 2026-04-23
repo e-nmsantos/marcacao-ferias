@@ -129,8 +129,6 @@ def validate_user_account(username: str, item: dict) -> dict:
     if not verify_password("__validation_probe__", password_hash) and not password_hash.startswith("pbkdf2_sha256$"):
         raise DataStoreError(f"Password inválida para login {normalized_username}.")
     staff_name = normalize_employee_name(str(item.get("staff_name", "")).strip())
-    if role == "user" and not staff_name:
-        raise DataStoreError(f"O login {normalized_username} precisa de um colaborador associado.")
     return {
         "password_hash": password_hash,
         "role": role,
