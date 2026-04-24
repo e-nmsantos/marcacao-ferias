@@ -376,8 +376,11 @@ def _load_legacy_db_data(connection: sqlite3.Connection) -> tuple[list[dict], li
 
 
 def _load_relational_data(connection: sqlite3.Connection) -> tuple[list[dict], list[dict], dict[str, dict]]:
+    staff_order_sql = "SELECT name, team, role, active FROM staff ORDER BY LOWER(name), name"
+    if storage_backend() == "sqlite":
+        staff_order_sql = "SELECT name, team, role, active FROM staff ORDER BY name COLLATE NOCASE"
     staff_rows = connection.execute(
-        "SELECT name, team, role, active FROM staff ORDER BY name COLLATE NOCASE"
+        staff_order_sql
     ).fetchall()
     staff = [
         {
