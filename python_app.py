@@ -31,7 +31,6 @@ from vacation_app.storage import (
     build_data_payload,
     get_storage_token,
     has_storage_source,
-    init_db,
     load_data,
     parse_payload,
     release_data_lock,
@@ -41,12 +40,12 @@ from vacation_app.storage import (
 )
 
 
-def sync_state(vacations: list[dict], staff: list[dict], users: dict[str, dict]) -> None:
+def sync_state(vacations: list[dict], staff: list[dict], users: dict[str, dict], storage_token: str | None = None) -> None:
     st.session_state.vacations = vacations
     st.session_state.staff = staff
     st.session_state.users = users
     st.session_state.data_error = None
-    st.session_state.data_mtime = get_storage_token()
+    st.session_state.data_mtime = storage_token if storage_token is not None else get_storage_token()
 
 
 def refresh_state_from_disk(force: bool = False) -> None:
@@ -54,7 +53,6 @@ def refresh_state_from_disk(force: bool = False) -> None:
         if force or "vacations" not in st.session_state:
             sync_state([], [], validate_users_map(None, []))
         return
-    init_db()
     current_mtime = get_storage_token()
     if not force and st.session_state.get("data_mtime") == current_mtime:
         return
@@ -63,7 +61,7 @@ def refresh_state_from_disk(force: bool = False) -> None:
     except DataStoreError as exc:
         st.session_state.data_error = str(exc)
         return
-    sync_state(vacations, staff, users)
+    sync_state(vacations, staff, users, storage_token=current_mtime)
 
 
 def mutate_data(mutator) -> None:
@@ -82,8 +80,8 @@ def mutate_data(mutator) -> None:
         mutator(payload["vacations"], payload["staff"], payload["users"])
         validated_staff = validate_staff_list(payload["staff"])
         validated_users = validate_users_map(payload["users"], validated_staff)
-        save_data(payload["vacations"], validated_staff, validated_users)
-        sync_state(payload["vacations"], validated_staff, validated_users)
+        updated_at = save_data(payload["vacations"], validated_staff, validated_users)
+        sync_state(payload["vacations"], validated_staff, validated_users, storage_token=updated_at)
     finally:
         release_data_lock()
 

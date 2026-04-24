@@ -4,7 +4,9 @@ import json
 import os
 import sqlite3
 import time
+from contextlib import contextmanager
 from datetime import date, datetime
+from functools import lru_cache
 from urllib.parse import urlparse
 
 from vacation_app.auth import DataStoreError, normalize_employee_name, validate_user_account
@@ -12,6 +14,7 @@ from vacation_app.constants import DATA_FILE, DATA_VERSION, DB_FILE, DEFAULT_USE
 
 POSTGRES_LOCK_KEY = 987654321
 _POSTGRES_LOCK_CONNECTION = None
+_SCHEMA_READY = False
 
 
 def _read_streamlit_secret() -> str:
@@ -30,6 +33,7 @@ def _read_streamlit_secret() -> str:
     return ""
 
 
+@lru_cache(maxsize=1)
 def get_database_url() -> str:
     for key in ("DATABASE_URL", "POSTGRES_URL"):
         value = os.getenv(key, "").strip()
@@ -38,6 +42,7 @@ def get_database_url() -> str:
     return _read_streamlit_secret()
 
 
+@lru_cache(maxsize=1)
 def storage_backend() -> str:
     database_url = get_database_url()
     if database_url:
@@ -53,6 +58,26 @@ def has_external_storage() -> bool:
 
 def has_storage_source() -> bool:
     return has_external_storage() or DB_FILE.exists() or DATA_FILE.exists()
+
+
+@lru_cache(maxsize=1)
+def _get_postgres_pool():
+    database_url = get_database_url()
+    if not database_url:
+        raise DataStoreError("DATABASE_URL não configurada para armazenamento externo.")
+    try:
+        from psycopg.rows import dict_row
+        from psycopg_pool import ConnectionPool
+    except ModuleNotFoundError as exc:
+        raise DataStoreError("As dependências psycopg/psycopg_pool não estão instaladas.") from exc
+    return ConnectionPool(
+        conninfo=database_url,
+        min_size=1,
+        max_size=5,
+        kwargs={"row_factory": dict_row},
+        open=True,
+        timeout=10,
+    )
 
 
 def serialize_date(value: date) -> str:
@@ -214,25 +239,25 @@ def load_json_data() -> tuple[list[dict], list[dict], dict[str, dict]]:
         raise DataStoreError("Estrutura de dados inválida no armazenamento.") from exc
 
 
+@contextmanager
 def connect_db():
     if storage_backend() == "postgres":
-        database_url = get_database_url()
-        if not database_url:
-            raise DataStoreError("DATABASE_URL não configurada para armazenamento externo.")
-        try:
-            import psycopg
-            from psycopg.rows import dict_row
-        except ModuleNotFoundError as exc:
-            raise DataStoreError("A dependência psycopg não está instalada.") from exc
-        connection = psycopg.connect(database_url, row_factory=dict_row)
-        return connection
+        with _get_postgres_pool().connection() as connection:
+            yield connection
+        return
     connection = sqlite3.connect(DB_FILE)
     connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    return connection
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        yield connection
+    finally:
+        connection.close()
 
 
 def init_db() -> None:
+    global _SCHEMA_READY
+    if _SCHEMA_READY:
+        return
     with connect_db() as connection:
         if storage_backend() == "postgres":
             connection.execute(
@@ -358,6 +383,7 @@ def init_db() -> None:
                 """
             )
         connection.commit()
+    _SCHEMA_READY = True
 
 
 def _has_relational_rows(connection: sqlite3.Connection) -> bool:
@@ -456,7 +482,7 @@ def get_storage_token() -> str | None:
         return None
 
 
-def save_data(vacations: list[dict], staff: list[dict], users: dict[str, dict]) -> None:
+def save_data(vacations: list[dict], staff: list[dict], users: dict[str, dict]) -> str:
     validated_staff = validate_staff_list(staff)
     normalized_staff, normalized_users = ensure_user_staff_links(validated_staff, users)
     validated_users = validate_users_map(normalized_users, normalized_staff)
@@ -563,6 +589,7 @@ def save_data(vacations: list[dict], staff: list[dict], users: dict[str, dict]) 
                 (payload_text, updated_at),
             )
         connection.commit()
+    return updated_at
 
 
 def load_data() -> tuple[list[dict], list[dict], dict[str, dict]]:
@@ -588,13 +615,14 @@ def acquire_data_lock(timeout_seconds: float = 10.0, poll_interval: float = 0.1)
     if storage_backend() == "postgres":
         if _POSTGRES_LOCK_CONNECTION is not None:
             return
-        connection = connect_db()
+        pool = _get_postgres_pool()
+        connection = pool.getconn()
         try:
             connection.execute("SELECT pg_advisory_lock(%s)", (POSTGRES_LOCK_KEY,))
             _POSTGRES_LOCK_CONNECTION = connection
             return
         except Exception:
-            connection.close()
+            pool.putconn(connection)
             raise
     deadline = time.time() + timeout_seconds
     while True:
@@ -620,10 +648,11 @@ def release_data_lock() -> None:
     global _POSTGRES_LOCK_CONNECTION
     if storage_backend() == "postgres":
         if _POSTGRES_LOCK_CONNECTION is not None:
+            pool = _get_postgres_pool()
             try:
                 _POSTGRES_LOCK_CONNECTION.execute("SELECT pg_advisory_unlock(%s)", (POSTGRES_LOCK_KEY,))
             finally:
-                _POSTGRES_LOCK_CONNECTION.close()
+                pool.putconn(_POSTGRES_LOCK_CONNECTION)
                 _POSTGRES_LOCK_CONNECTION = None
         return
     LOCK_FILE.unlink(missing_ok=True)
