@@ -18,8 +18,6 @@ from vacation_app.calendar_utils import (
 from vacation_app.constants import (
     ABSENCE_TYPES,
     BACKUP_DIR,
-    DATA_FILE,
-    DB_FILE,
     NAV_ADMIN,
     NAV_USER,
     NAV_VIEWER,
@@ -31,6 +29,8 @@ from vacation_app.reports import build_report_rows, report_period_label
 from vacation_app.storage import (
     acquire_data_lock,
     build_data_payload,
+    get_storage_token,
+    has_storage_source,
     init_db,
     load_data,
     parse_payload,
@@ -46,16 +46,16 @@ def sync_state(vacations: list[dict], staff: list[dict], users: dict[str, dict])
     st.session_state.staff = staff
     st.session_state.users = users
     st.session_state.data_error = None
-    st.session_state.data_mtime = DB_FILE.stat().st_mtime_ns if DB_FILE.exists() else None
+    st.session_state.data_mtime = get_storage_token()
 
 
 def refresh_state_from_disk(force: bool = False) -> None:
-    if not DB_FILE.exists() and not DATA_FILE.exists():
+    if not has_storage_source():
         if force or "vacations" not in st.session_state:
             sync_state([], [], validate_users_map(None, []))
         return
     init_db()
-    current_mtime = DB_FILE.stat().st_mtime_ns if DB_FILE.exists() else None
+    current_mtime = get_storage_token()
     if not force and st.session_state.get("data_mtime") == current_mtime:
         return
     try:
@@ -74,7 +74,7 @@ def mutate_data(mutator) -> None:
         "users": validate_users_map(None, []),
     }
     try:
-        has_storage = DB_FILE.exists() or DATA_FILE.exists()
+        has_storage = has_storage_source()
         vacations, staff, users = load_data() if has_storage else ([], [], validate_users_map(None, []))
         payload["vacations"] = [dict(item) for item in vacations]
         payload["staff"] = [dict(item) for item in staff]

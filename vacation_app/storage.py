@@ -5,9 +5,54 @@ import os
 import sqlite3
 import time
 from datetime import date, datetime
+from urllib.parse import urlparse
 
 from vacation_app.auth import DataStoreError, normalize_employee_name, validate_user_account
 from vacation_app.constants import DATA_FILE, DATA_VERSION, DB_FILE, DEFAULT_USERS, LOCK_FILE
+
+POSTGRES_LOCK_KEY = 987654321
+_POSTGRES_LOCK_CONNECTION = None
+
+
+def _read_streamlit_secret() -> str:
+    try:
+        import streamlit as st
+    except Exception:
+        return ""
+    try:
+        if "DATABASE_URL" in st.secrets:
+            return str(st.secrets["DATABASE_URL"]).strip()
+        database_section = st.secrets.get("database")
+        if database_section and "url" in database_section:
+            return str(database_section["url"]).strip()
+    except Exception:
+        return ""
+    return ""
+
+
+def get_database_url() -> str:
+    for key in ("DATABASE_URL", "POSTGRES_URL"):
+        value = os.getenv(key, "").strip()
+        if value:
+            return value
+    return _read_streamlit_secret()
+
+
+def storage_backend() -> str:
+    database_url = get_database_url()
+    if database_url:
+        scheme = urlparse(database_url).scheme.lower()
+        if scheme in {"postgres", "postgresql"}:
+            return "postgres"
+    return "sqlite"
+
+
+def has_external_storage() -> bool:
+    return storage_backend() == "postgres"
+
+
+def has_storage_source() -> bool:
+    return has_external_storage() or DB_FILE.exists() or DATA_FILE.exists()
 
 
 def serialize_date(value: date) -> str:
@@ -169,7 +214,18 @@ def load_json_data() -> tuple[list[dict], list[dict], dict[str, dict]]:
         raise DataStoreError("Estrutura de dados inválida no armazenamento.") from exc
 
 
-def connect_db() -> sqlite3.Connection:
+def connect_db():
+    if storage_backend() == "postgres":
+        database_url = get_database_url()
+        if not database_url:
+            raise DataStoreError("DATABASE_URL não configurada para armazenamento externo.")
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+        except ModuleNotFoundError as exc:
+            raise DataStoreError("A dependência psycopg não está instalada.") from exc
+        connection = psycopg.connect(database_url, row_factory=dict_row)
+        return connection
     connection = sqlite3.connect(DB_FILE)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
@@ -178,62 +234,129 @@ def connect_db() -> sqlite3.Connection:
 
 def init_db() -> None:
     with connect_db() as connection:
-        connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS staff (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                team TEXT NOT NULL DEFAULT '',
-                role TEXT NOT NULL DEFAULT '',
-                active INTEGER NOT NULL DEFAULT 1
-            );
+        if storage_backend() == "postgres":
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS staff (
+                    id BIGSERIAL PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    team TEXT NOT NULL DEFAULT '',
+                    role TEXT NOT NULL DEFAULT '',
+                    active BOOLEAN NOT NULL DEFAULT TRUE
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    username TEXT PRIMARY KEY,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    staff_id BIGINT NULL REFERENCES staff(id) ON DELETE SET NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS vacations (
+                    id TEXT PRIMARY KEY,
+                    employee_name TEXT NOT NULL,
+                    staff_id BIGINT NULL REFERENCES staff(id) ON DELETE SET NULL,
+                    created_by TEXT NULL DEFAULT '',
+                    team TEXT NOT NULL DEFAULT '',
+                    absence_type TEXT NOT NULL DEFAULT 'Férias',
+                    start_date TEXT NOT NULL,
+                    end_date TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    half_day BOOLEAN NOT NULL DEFAULT FALSE,
+                    replacement_contact TEXT NOT NULL DEFAULT '',
+                    reason TEXT NOT NULL DEFAULT '',
+                    requested_at TEXT NOT NULL,
+                    approved_at TEXT NULL,
+                    approved_by TEXT NOT NULL DEFAULT ''
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id BIGSERIAL PRIMARY KEY,
+                    event_type TEXT NOT NULL,
+                    entity_type TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    actor TEXT NOT NULL DEFAULT '',
+                    happened_at TEXT NOT NULL,
+                    details TEXT NOT NULL DEFAULT ''
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app_state (
+                    id INTEGER PRIMARY KEY,
+                    payload TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        else:
+            connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS staff (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                    team TEXT NOT NULL DEFAULT '',
+                    role TEXT NOT NULL DEFAULT '',
+                    active INTEGER NOT NULL DEFAULT 1
+                );
 
-            CREATE TABLE IF NOT EXISTS users (
-                username TEXT PRIMARY KEY,
-                password_hash TEXT NOT NULL,
-                role TEXT NOT NULL,
-                name TEXT NOT NULL,
-                staff_id INTEGER NULL,
-                FOREIGN KEY (staff_id) REFERENCES staff(id) ON DELETE SET NULL
-            );
+                CREATE TABLE IF NOT EXISTS users (
+                    username TEXT PRIMARY KEY,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    staff_id INTEGER NULL,
+                    FOREIGN KEY (staff_id) REFERENCES staff(id) ON DELETE SET NULL
+                );
 
-            CREATE TABLE IF NOT EXISTS vacations (
-                id TEXT PRIMARY KEY,
-                employee_name TEXT NOT NULL,
-                staff_id INTEGER NULL,
-                created_by TEXT NULL DEFAULT '',
-                team TEXT NOT NULL DEFAULT '',
-                absence_type TEXT NOT NULL DEFAULT 'Férias',
-                start_date TEXT NOT NULL,
-                end_date TEXT NOT NULL,
-                status TEXT NOT NULL,
-                half_day INTEGER NOT NULL DEFAULT 0,
-                replacement_contact TEXT NOT NULL DEFAULT '',
-                reason TEXT NOT NULL DEFAULT '',
-                requested_at TEXT NOT NULL,
-                approved_at TEXT NULL,
-                approved_by TEXT NOT NULL DEFAULT '',
-                FOREIGN KEY (staff_id) REFERENCES staff(id) ON DELETE SET NULL,
-                FOREIGN KEY (created_by) REFERENCES users(username) ON DELETE SET NULL
-            );
+                CREATE TABLE IF NOT EXISTS vacations (
+                    id TEXT PRIMARY KEY,
+                    employee_name TEXT NOT NULL,
+                    staff_id INTEGER NULL,
+                    created_by TEXT NULL DEFAULT '',
+                    team TEXT NOT NULL DEFAULT '',
+                    absence_type TEXT NOT NULL DEFAULT 'Férias',
+                    start_date TEXT NOT NULL,
+                    end_date TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    half_day INTEGER NOT NULL DEFAULT 0,
+                    replacement_contact TEXT NOT NULL DEFAULT '',
+                    reason TEXT NOT NULL DEFAULT '',
+                    requested_at TEXT NOT NULL,
+                    approved_at TEXT NULL,
+                    approved_by TEXT NOT NULL DEFAULT '',
+                    FOREIGN KEY (staff_id) REFERENCES staff(id) ON DELETE SET NULL,
+                    FOREIGN KEY (created_by) REFERENCES users(username) ON DELETE SET NULL
+                );
 
-            CREATE TABLE IF NOT EXISTS audit_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_type TEXT NOT NULL,
-                entity_type TEXT NOT NULL,
-                entity_id TEXT NOT NULL,
-                actor TEXT NOT NULL DEFAULT '',
-                happened_at TEXT NOT NULL,
-                details TEXT NOT NULL DEFAULT ''
-            );
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_type TEXT NOT NULL,
+                    entity_type TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    actor TEXT NOT NULL DEFAULT '',
+                    happened_at TEXT NOT NULL,
+                    details TEXT NOT NULL DEFAULT ''
+                );
 
-            CREATE TABLE IF NOT EXISTS app_state (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                payload TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-            """
-        )
+                CREATE TABLE IF NOT EXISTS app_state (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    payload TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                """
+            )
         connection.commit()
 
 
@@ -316,71 +439,126 @@ def _load_relational_data(connection: sqlite3.Connection) -> tuple[list[dict], l
     return vacations, staff, users
 
 
+def get_storage_token() -> str | None:
+    if storage_backend() == "sqlite" and not DB_FILE.exists() and not DATA_FILE.exists():
+        return None
+    try:
+        init_db()
+        with connect_db() as connection:
+            row = connection.execute("SELECT updated_at FROM app_state WHERE id = 1").fetchone()
+            return None if row is None else str(row["updated_at"])
+    except Exception:
+        if storage_backend() == "sqlite" and DB_FILE.exists():
+            return str(DB_FILE.stat().st_mtime_ns)
+        return None
+
+
 def save_data(vacations: list[dict], staff: list[dict], users: dict[str, dict]) -> None:
     validated_staff = validate_staff_list(staff)
     normalized_staff, normalized_users = ensure_user_staff_links(validated_staff, users)
     validated_users = validate_users_map(normalized_users, normalized_staff)
     serialized_vacations = [deserialize_vacation(serialize_vacation(item)) for item in vacations]
     init_db()
+    backend = storage_backend()
+    payload_text = json.dumps(build_data_payload(serialized_vacations, normalized_staff, validated_users), ensure_ascii=False, indent=2)
+    updated_at = datetime.now().isoformat()
     with connect_db() as connection:
         connection.execute("BEGIN")
         connection.execute("DELETE FROM vacations")
         connection.execute("DELETE FROM users")
         connection.execute("DELETE FROM staff")
         for member in normalized_staff:
-            connection.execute(
-                "INSERT INTO staff (name, team, role, active) VALUES (?, ?, ?, ?)",
-                (member["Nome"], member["Equipa"], member["Função"], int(member["Ativo"])),
-            )
+            if backend == "postgres":
+                connection.execute(
+                    "INSERT INTO staff (name, team, role, active) VALUES (%s, %s, %s, %s)",
+                    (member["Nome"], member["Equipa"], member["Função"], bool(member["Ativo"])),
+                )
+            else:
+                connection.execute(
+                    "INSERT INTO staff (name, team, role, active) VALUES (?, ?, ?, ?)",
+                    (member["Nome"], member["Equipa"], member["Função"], int(member["Ativo"])),
+                )
         staff_ids = {
             row["name"]: row["id"]
             for row in connection.execute("SELECT id, name FROM staff").fetchall()
         }
         for username, account in validated_users.items():
             staff_id = staff_ids.get(account["staff_name"]) if account.get("staff_name") else None
-            connection.execute(
-                """
-                INSERT INTO users (username, password_hash, role, name, staff_id)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (username, account["password_hash"], account["role"], account["name"], staff_id),
-            )
+            if backend == "postgres":
+                connection.execute(
+                    """
+                    INSERT INTO users (username, password_hash, role, name, staff_id)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (username, account["password_hash"], account["role"], account["name"], staff_id),
+                )
+            else:
+                connection.execute(
+                    """
+                    INSERT INTO users (username, password_hash, role, name, staff_id)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (username, account["password_hash"], account["role"], account["name"], staff_id),
+                )
         for vacation in serialized_vacations:
             staff_id = staff_ids.get(vacation["employee_name"])
+            params = (
+                vacation["id"],
+                vacation["employee_name"],
+                staff_id,
+                vacation["created_by"],
+                vacation["team"],
+                vacation["absence_type"],
+                serialize_date(vacation["start_date"]),
+                serialize_date(vacation["end_date"]),
+                vacation["status"],
+                bool(vacation["half_day"]) if backend == "postgres" else int(vacation["half_day"]),
+                vacation["replacement_contact"],
+                vacation["reason"],
+                serialize_dt(vacation["requested_at"]),
+                serialize_dt(vacation["approved_at"]) if vacation.get("approved_at") else None,
+                vacation.get("approved_by", ""),
+            )
+            if backend == "postgres":
+                connection.execute(
+                    """
+                    INSERT INTO vacations (
+                        id, employee_name, staff_id, created_by, team, absence_type, start_date, end_date,
+                        status, half_day, replacement_contact, reason, requested_at, approved_at, approved_by
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    params,
+                )
+            else:
+                connection.execute(
+                    """
+                    INSERT INTO vacations (
+                        id, employee_name, staff_id, created_by, team, absence_type, start_date, end_date,
+                        status, half_day, replacement_contact, reason, requested_at, approved_at, approved_by
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    params,
+                )
+        if backend == "postgres":
             connection.execute(
                 """
-                INSERT INTO vacations (
-                    id, employee_name, staff_id, created_by, team, absence_type, start_date, end_date,
-                    status, half_day, replacement_contact, reason, requested_at, approved_at, approved_by
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO app_state (id, payload, updated_at)
+                VALUES (1, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at
                 """,
-                (
-                    vacation["id"],
-                    vacation["employee_name"],
-                    staff_id,
-                    vacation["created_by"],
-                    vacation["team"],
-                    vacation["absence_type"],
-                    serialize_date(vacation["start_date"]),
-                    serialize_date(vacation["end_date"]),
-                    vacation["status"],
-                    int(vacation["half_day"]),
-                    vacation["replacement_contact"],
-                    vacation["reason"],
-                    serialize_dt(vacation["requested_at"]),
-                    serialize_dt(vacation["approved_at"]) if vacation.get("approved_at") else None,
-                    vacation.get("approved_by", ""),
-                ),
+                (payload_text, updated_at),
             )
-        connection.execute(
-            """
-            INSERT INTO app_state (id, payload, updated_at)
-            VALUES (1, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at
-            """,
-            (json.dumps(build_data_payload(serialized_vacations, normalized_staff, validated_users), ensure_ascii=False, indent=2), datetime.now().isoformat()),
-        )
+        else:
+            connection.execute(
+                """
+                INSERT INTO app_state (id, payload, updated_at)
+                VALUES (1, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at
+                """,
+                (payload_text, updated_at),
+            )
         connection.commit()
 
 
@@ -403,6 +581,18 @@ def load_data() -> tuple[list[dict], list[dict], dict[str, dict]]:
 
 
 def acquire_data_lock(timeout_seconds: float = 10.0, poll_interval: float = 0.1) -> None:
+    global _POSTGRES_LOCK_CONNECTION
+    if storage_backend() == "postgres":
+        if _POSTGRES_LOCK_CONNECTION is not None:
+            return
+        connection = connect_db()
+        try:
+            connection.execute("SELECT pg_advisory_lock(%s)", (POSTGRES_LOCK_KEY,))
+            _POSTGRES_LOCK_CONNECTION = connection
+            return
+        except Exception:
+            connection.close()
+            raise
     deadline = time.time() + timeout_seconds
     while True:
         try:
@@ -424,4 +614,13 @@ def acquire_data_lock(timeout_seconds: float = 10.0, poll_interval: float = 0.1)
 
 
 def release_data_lock() -> None:
+    global _POSTGRES_LOCK_CONNECTION
+    if storage_backend() == "postgres":
+        if _POSTGRES_LOCK_CONNECTION is not None:
+            try:
+                _POSTGRES_LOCK_CONNECTION.execute("SELECT pg_advisory_unlock(%s)", (POSTGRES_LOCK_KEY,))
+            finally:
+                _POSTGRES_LOCK_CONNECTION.close()
+                _POSTGRES_LOCK_CONNECTION = None
+        return
     LOCK_FILE.unlink(missing_ok=True)
