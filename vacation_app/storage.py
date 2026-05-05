@@ -598,113 +598,121 @@ def save_data(vacations: list[dict], staff: list[dict], users: dict[str, dict]) 
     backend = storage_backend()
     payload_text = json.dumps(build_data_payload(serialized_vacations, normalized_staff, validated_users), ensure_ascii=False, indent=2)
     updated_at = datetime.now().isoformat()
-    with connect_db() as connection:
-        connection.execute("BEGIN")
-        connection.execute("DELETE FROM vacations")
-        connection.execute("DELETE FROM users")
-        connection.execute("DELETE FROM staff")
-        for member in normalized_staff:
-            if backend == "postgres":
-                connection.execute(
-                    "INSERT INTO staff (name, team, role, active) VALUES (%s, %s, %s, %s)",
-                    (member["Nome"], member["Equipa"], member["Função"], bool(member["Ativo"])),
-                )
-            else:
-                connection.execute(
-                    "INSERT INTO staff (name, team, role, active) VALUES (?, ?, ?, ?)",
-                    (member["Nome"], member["Equipa"], member["Função"], int(member["Ativo"])),
-                )
-        staff_ids = {
-            row["name"]: row["id"]
-            for row in connection.execute("SELECT id, name FROM staff").fetchall()
-        }
-        for username, account in validated_users.items():
-            staff_id = staff_ids.get(account["staff_name"]) if account.get("staff_name") else None
-            if backend == "postgres":
-                connection.execute(
-                    """
-                    INSERT INTO users (username, password_hash, role, name, staff_id)
-                    VALUES (%s, %s, %s, %s, %s)
-                    """,
-                    (username, account["password_hash"], account["role"], account["name"], staff_id),
-                )
-            else:
-                connection.execute(
-                    """
-                    INSERT INTO users (username, password_hash, role, name, staff_id)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (username, account["password_hash"], account["role"], account["name"], staff_id),
-                )
-        for vacation in serialized_vacations:
-            staff_id = staff_ids.get(vacation["employee_name"])
-            params = (
-                vacation["id"],
-                vacation["employee_name"],
-                staff_id,
-                vacation["created_by"],
-                vacation["team"],
-                vacation["absence_type"],
-                serialize_date(vacation["start_date"]),
-                serialize_date(vacation["end_date"]),
-                vacation["status"],
-                bool(vacation["half_day"]) if backend == "postgres" else int(vacation["half_day"]),
-                vacation["replacement_contact"],
-                vacation["reason"],
-                serialize_dt(vacation["requested_at"]),
-                serialize_dt(vacation["approved_at"]) if vacation.get("approved_at") else None,
-                vacation.get("approved_by", ""),
-            )
-            if backend == "postgres":
-                connection.execute(
-                    """
-                    INSERT INTO vacations (
-                        id, employee_name, staff_id, created_by, team, absence_type, start_date, end_date,
-                        status, half_day, replacement_contact, reason, requested_at, approved_at, approved_by
+    try:
+        with connect_db() as connection:
+            connection.execute("BEGIN")
+            connection.execute("DELETE FROM vacations")
+            connection.execute("DELETE FROM users")
+            connection.execute("DELETE FROM staff")
+            for member in normalized_staff:
+                if backend == "postgres":
+                    connection.execute(
+                        "INSERT INTO staff (name, team, role, active) VALUES (%s, %s, %s, %s)",
+                        (member["Nome"], member["Equipa"], member["Função"], bool(member["Ativo"])),
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                else:
+                    connection.execute(
+                        "INSERT INTO staff (name, team, role, active) VALUES (?, ?, ?, ?)",
+                        (member["Nome"], member["Equipa"], member["Função"], int(member["Ativo"])),
+                    )
+            staff_ids = {
+                row["name"]: row["id"]
+                for row in connection.execute("SELECT id, name FROM staff").fetchall()
+            }
+            for username, account in validated_users.items():
+                staff_id = staff_ids.get(account["staff_name"]) if account.get("staff_name") else None
+                if backend == "postgres":
+                    connection.execute(
+                        """
+                        INSERT INTO users (username, password_hash, role, name, staff_id)
+                        VALUES (%s, %s, %s, %s, %s)
+                        """,
+                        (username, account["password_hash"], account["role"], account["name"], staff_id),
+                    )
+                else:
+                    connection.execute(
+                        """
+                        INSERT INTO users (username, password_hash, role, name, staff_id)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (username, account["password_hash"], account["role"], account["name"], staff_id),
+                    )
+            for vacation in serialized_vacations:
+                staff_id = staff_ids.get(vacation["employee_name"])
+                params = (
+                    vacation["id"],
+                    vacation["employee_name"],
+                    staff_id,
+                    vacation["created_by"],
+                    vacation["team"],
+                    vacation["absence_type"],
+                    serialize_date(vacation["start_date"]),
+                    serialize_date(vacation["end_date"]),
+                    vacation["status"],
+                    bool(vacation["half_day"]) if backend == "postgres" else int(vacation["half_day"]),
+                    vacation["replacement_contact"],
+                    vacation["reason"],
+                    serialize_dt(vacation["requested_at"]),
+                    serialize_dt(vacation["approved_at"]) if vacation.get("approved_at") else None,
+                    vacation.get("approved_by", ""),
+                )
+                if backend == "postgres":
+                    connection.execute(
+                        """
+                        INSERT INTO vacations (
+                            id, employee_name, staff_id, created_by, team, absence_type, start_date, end_date,
+                            status, half_day, replacement_contact, reason, requested_at, approved_at, approved_by
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        params,
+                    )
+                else:
+                    connection.execute(
+                        """
+                        INSERT INTO vacations (
+                            id, employee_name, staff_id, created_by, team, absence_type, start_date, end_date,
+                            status, half_day, replacement_contact, reason, requested_at, approved_at, approved_by
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        params,
+                    )
+            if backend == "postgres":
+                connection.execute(
+                    """
+                    INSERT INTO app_state (id, payload, updated_at)
+                    VALUES (1, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at
                     """,
-                    params,
+                    (payload_text, updated_at),
                 )
             else:
                 connection.execute(
                     """
-                    INSERT INTO vacations (
-                        id, employee_name, staff_id, created_by, team, absence_type, start_date, end_date,
-                        status, half_day, replacement_contact, reason, requested_at, approved_at, approved_by
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO app_state (id, payload, updated_at)
+                    VALUES (1, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at
                     """,
-                    params,
+                    (payload_text, updated_at),
                 )
-        if backend == "postgres":
-            connection.execute(
-                """
-                INSERT INTO app_state (id, payload, updated_at)
-                VALUES (1, %s, %s)
-                ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at
-                """,
-                (payload_text, updated_at),
-            )
-        else:
-            connection.execute(
-                """
-                INSERT INTO app_state (id, payload, updated_at)
-                VALUES (1, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at
-                """,
-                (payload_text, updated_at),
-            )
-        connection.commit()
+            connection.commit()
+    except Exception as exc:
+        raise DataStoreError("Não foi possível guardar os dados no armazenamento.") from exc
     return updated_at
 
 
 def load_data() -> tuple[list[dict], list[dict], dict[str, dict]]:
     init_db()
-    with connect_db() as connection:
-        if _has_relational_rows(connection):
-            return _load_relational_data(connection)
-        legacy_data = _load_legacy_db_data(connection)
+    try:
+        with connect_db() as connection:
+            if _has_relational_rows(connection):
+                return _load_relational_data(connection)
+            legacy_data = _load_legacy_db_data(connection)
+    except Exception as exc:
+        if DATA_FILE.exists():
+            return load_json_data()
+        raise DataStoreError("Não foi possível carregar os dados do armazenamento.") from exc
     if legacy_data is not None:
         save_data(*legacy_data)
         return legacy_data

@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import time
 import unittest
+from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
 import gc
 
 from vacation_app.auth import hash_password, validate_user_account
 from vacation_app.reports import build_report_rows
-from vacation_app.storage import load_data, parse_payload, save_data
+from vacation_app.storage import build_data_payload, load_data, parse_payload, save_data
 import vacation_app.storage as storage
 
 
@@ -95,6 +97,46 @@ class StorageAndReportsTests(unittest.TestCase):
         self.assertEqual(loaded_staff[0]["Nome"], "Mónica Romão")
         self.assertEqual(loaded_vacations[0]["approved_by"], "admin")
         self.assertEqual(loaded_vacations[0]["approved_at"], datetime(2026, 4, 24, 9, 30))
+
+    def test_load_data_falls_back_to_local_snapshot_when_postgres_fails(self) -> None:
+        backup_payload = build_data_payload(
+            [],
+            [{"Nome": "Ana", "Equipa": "RH", "Função": "", "Ativo": True}],
+            {
+                "admin": {
+                    "password_hash": hash_password("admin123"),
+                    "role": "admin",
+                    "name": "Administrador",
+                    "staff_name": "",
+                }
+            },
+        )
+        storage.DATA_FILE.write_text(json.dumps(backup_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        class BrokenConnection:
+            def execute(self, *args, **kwargs):
+                raise Exception("database unavailable")
+
+        @contextmanager
+        def broken_connect_db():
+            yield BrokenConnection()
+
+        original_backend = storage.storage_backend
+        original_init_db = storage.init_db
+        original_connect_db = storage.connect_db
+        try:
+            storage.storage_backend = lambda: "postgres"
+            storage.init_db = lambda: None
+            storage.connect_db = broken_connect_db
+            vacations, staff, users = load_data()
+        finally:
+            storage.storage_backend = original_backend
+            storage.init_db = original_init_db
+            storage.connect_db = original_connect_db
+
+        self.assertEqual(vacations, [])
+        self.assertEqual(staff[0]["Nome"], "Ana")
+        self.assertIn("admin", users)
 
     def test_reports_use_clear_columns_and_cross_year_business_days(self) -> None:
         vacations = [
