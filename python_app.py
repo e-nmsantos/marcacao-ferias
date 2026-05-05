@@ -155,6 +155,8 @@ def init_state() -> None:
         st.session_state.current_user = None
     if "main_nav" not in st.session_state:
         st.session_state.main_nav = "Calendário"
+    if "pending_main_nav_change" not in st.session_state:
+        st.session_state.pending_main_nav_change = None
     if "new_request_start" not in st.session_state:
         st.session_state.new_request_start = date.today()
     if "new_request_end" not in st.session_state:
@@ -692,7 +694,8 @@ def current_user() -> dict | None:
 
 
 def set_main_nav(page: str) -> None:
-        st.session_state.main_nav = page
+        """Set pending nav change (will be applied before radio widget instantiation)."""
+        st.session_state.pending_main_nav_change = page
 
 
 def dashboard_metrics(vacations: list[dict], holidays: dict[date, str]) -> dict[str, str | int]:
@@ -1163,6 +1166,11 @@ def top_header() -> None:
 
 
 def render_sidebar_navigation(vacations: list[dict], holidays: dict[date, str]) -> None:
+    # Apply any pending nav change before instantiating the radio widget
+    if st.session_state.pending_main_nav_change:
+        st.session_state.main_nav = st.session_state.pending_main_nav_change
+        st.session_state.pending_main_nav_change = None
+    
     role = (current_user() or {}).get("role", "viewer")
     nav = NAV_ADMIN if role == "admin" else NAV_USER if role == "user" else NAV_VIEWER
     if st.session_state.main_nav not in nav:
@@ -1203,8 +1211,9 @@ def render_sidebar_navigation(vacations: list[dict], holidays: dict[date, str]) 
         default_index = 0
 
     chosen = st.sidebar.radio("Navegação", options=nav, index=default_index, key="main_nav", format_func=nav_label, label_visibility="collapsed")
+    # Update main_nav only if radio selection changed
     if chosen != st.session_state.main_nav:
-        set_main_nav(chosen)
+        st.session_state.main_nav = chosen
         st.rerun()
 
     st.sidebar.markdown("<div class='sidebar-section-title'>Resumo rápido</div>", unsafe_allow_html=True)
