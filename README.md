@@ -193,7 +193,39 @@ marcacao-ferias/
 
 ---
 
-## 📝 Changelog
+## � Deployment com Docker
+
+Para simplificar o deployment em produção, a aplicação inclui:
+
+- **Dockerfile**: Containerização com Python 3.11
+- **docker-compose.yml**: Orquestração de app + PostgreSQL (opcional)
+
+### Quick start
+
+```bash
+# Build e run com Docker Compose
+docker-compose up -d
+
+# Aceder ao app
+http://localhost:8501
+
+# Parar
+docker-compose down
+```
+
+### Guia completo
+
+Veja [DOCKER.md](DOCKER.md) para:
+- Configuração de PostgreSQL
+- Variáveis de ambiente
+- Persistência de dados
+- Deployment em produção
+- Reverse proxy (Nginx)
+- Health checks e troubleshooting
+
+---
+
+## �📝 Changelog
 
 ### v0.2.0 (Maio 2026)
 - ✅ UI polish: premium layout, calendar prominence, responsive
