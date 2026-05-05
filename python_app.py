@@ -13,8 +13,8 @@ from vacation_app.calendar_utils import (
     calculate_days,
     format_date,
     month_name_pt,
-    portugal_holidays,
 )
+from vacation_app.performance import cached_portugal_holidays
 from vacation_app.constants import (
     ABSENCE_TYPES,
     BACKUP_DIR,
@@ -2168,7 +2168,7 @@ def main() -> None:
     top_header()
     render_data_status()
     team_filter, status_filter, _ = render_filters()
-    holidays = portugal_holidays(st.session_state.current_month.year, st.session_state.selected_municipality)
+    holidays = cached_portugal_holidays(st.session_state.current_month.year, st.session_state.selected_municipality)
     # Add approved compensations as holidays (they don't count as business days)
     holidays = add_compensations_to_holidays(st.session_state.vacations, holidays)
     scope = "all" if is_admin() or (current_user() or {}).get("role") == "viewer" else "mine"
