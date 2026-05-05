@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gestao-ferias"
-version = "0.1.0"
+version = "0.2.0"
 description = "Aplicação de gestão de férias - backend e demo"
 authors = [ { name = "Nuno Santos" } ]
 readme = "README.md"
