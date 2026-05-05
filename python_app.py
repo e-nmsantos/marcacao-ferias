@@ -40,6 +40,41 @@ from vacation_app.storage import (
     validate_users_map,
 )
 
+# Simple UI translations and i18n helper
+TRANSLATIONS = {
+    "pt": {
+        "title": "Gestão de Férias",
+        "sidebar_brand": "Gestão de Férias",
+        "logout": "Sair",
+        "hero_eyebrow": "Gestão de férias",
+        "hero_title": "Pedidos rápidos. Aprovação clara. Visão em tempo real.",
+        "hero_copy": "Painel simples para colaboradores e gestores — solicitações autónomas, estado claro e relatórios prontos.",
+        "language_pt": "Português",
+        "language_en": "English",
+    },
+    "en": {
+        "title": "Leave Management",
+        "sidebar_brand": "Leave Manager",
+        "logout": "Sign out",
+        "hero_eyebrow": "Leave management",
+        "hero_title": "Fast requests. Clear approvals. Real-time view.",
+        "hero_copy": "Simple dashboard for employees and managers — autonomous requests, clear status and ready reports.",
+        "language_pt": "Português",
+        "language_en": "English",
+        "new_request_subheader": "✏️ New request from calendar",
+        "new_request_caption": "Click a day for a single-day request. Click another day to close a range.",
+        "submit_request": "Submit request",
+        "clear_request": "Clear",
+        "fill_employee_name": "Please provide employee name.",
+        "account_needs_staff": "Your account needs to be linked to a staff member.",
+    },
+}
+
+
+def t(key: str) -> str:
+    lang = st.session_state.get("lang", "pt")
+    return TRANSLATIONS.get(lang, TRANSLATIONS["pt"]).get(key, key)
+
 
 def sync_state(vacations: list[dict], staff: list[dict], users: dict[str, dict], storage_token: str | None = None) -> None:
     st.session_state.vacations = vacations
@@ -78,10 +113,15 @@ def mutate_data(mutator) -> None:
         payload["vacations"] = [dict(item) for item in vacations]
         payload["staff"] = [dict(item) for item in staff]
         payload["users"] = {username: dict(item) for username, item in users.items()}
+        # Run the mutator (may raise DataStoreError for business rule violations)
         mutator(payload["vacations"], payload["staff"], payload["users"])
         validated_staff = validate_staff_list(payload["staff"])
         validated_users = validate_users_map(payload["users"], validated_staff)
-        updated_at = save_data(payload["vacations"], validated_staff, validated_users)
+        try:
+            updated_at = save_data(payload["vacations"], validated_staff, validated_users)
+        except DataStoreError as exc:
+            st.session_state.data_error = str(exc)
+            raise
         sync_state(payload["vacations"], validated_staff, validated_users, storage_token=updated_at)
     finally:
         release_data_lock()
@@ -153,6 +193,8 @@ def init_state() -> None:
         st.session_state.edit_login_selector = ""
     if "selected_municipality" not in st.session_state:
         st.session_state.selected_municipality = "Nenhum"
+    if "lang" not in st.session_state:
+        st.session_state.lang = "pt"
     refresh_state_from_disk(force=True)
 
 
@@ -615,6 +657,30 @@ def apply_styles() -> None:
             font-weight: 600;
             margin-top: 4px;
         }
+        .sr-only {
+            position: absolute !important;
+            width: 1px !important;
+            height: 1px !important;
+            padding: 0 !important;
+            margin: -1px !important;
+            overflow: hidden !important;
+            clip: rect(0, 0, 0, 0) !important;
+            white-space: nowrap !important;
+            border: 0 !important;
+        }
+        .calendar-shell {
+            padding: 12px;
+            border-radius: 18px;
+            background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(249,250,251,0.9));
+            border: 1px solid rgba(226,232,240,0.95);
+            box-shadow: 0 14px 36px rgba(15,23,42,0.06);
+            margin-top: 12px;
+        }
+        .calendar-shell .stButton>button {
+            min-height: 42px;
+            font-weight:700;
+            border-radius: 10px;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -717,11 +783,10 @@ def render_dashboard_hero(vacations: list[dict], holidays: dict[date, str], curr
                 <div class='hero-shell'>
                     <div class='hero-grid'>
                         <div>
-                            <div class='hero-eyebrow'>Gestão de férias</div>
-                            <div class='hero-title'>Pedidos rápidos. Aprovação clara. Visão em tempo real.</div>
+                            <div class='hero-eyebrow'>{t('hero_eyebrow')}</div>
+                            <div class='hero-title'>{t('hero_title')}</div>
                             <div class='hero-copy'>
-                                Inspirado nos melhores fluxos de gestão de ausências, este painel dá ao colaborador autonomia para pedir
-                                férias e ao gestor uma leitura imediata do que está pendente, aprovado e em risco de conflito.
+                                {t('hero_copy')}
                             </div>
                             <div class='hero-pills'>
                                 <span class='hero-pill'>Pedido autónomo</span>
@@ -1083,7 +1148,7 @@ def top_header() -> None:
 
     left, right = st.columns([3, 2])
     with left:
-        st.title("Gestão de Férias")
+        st.title(t("title"))
         st.markdown("<div class='page-kicker'>Planeamento simples, visual limpo e pedidos organizados.</div>", unsafe_allow_html=True)
     with right:
         info_left, info_right = st.columns([3, 1])
@@ -1091,7 +1156,7 @@ def top_header() -> None:
             user = current_user() or {}
             st.caption(f"Sessão: {user.get('name', '-')}")
         with info_right:
-            if st.button("Sair", width='stretch'):
+            if st.button(t("logout"), width='stretch'):
                 st.session_state.authenticated = False
                 st.session_state.current_user = None
                 st.rerun()
@@ -1112,9 +1177,9 @@ def render_sidebar_navigation(vacations: list[dict], holidays: dict[date, str]) 
         next_holiday = f"{format_date(holiday)} - {holidays[holiday]}"
 
     st.sidebar.markdown(
-        """
+        f"""
         <div class='sidebar-shell'>
-            <div class='sidebar-brand'>📅 Gestão de Férias</div>
+            <div class='sidebar-brand'>📅 {t('sidebar_brand')}</div>
             <div class='sidebar-brand-sub'>Visão compacta, ações rápidas e leitura clara.</div>
         """,
         unsafe_allow_html=True,
@@ -1176,6 +1241,43 @@ def render_sidebar_navigation(vacations: list[dict], holidays: dict[date, str]) 
         set_main_nav(quick_target)
         st.rerun()
 
+    # Language selector
+    lang_options = [TRANSLATIONS['pt']['language_pt'], TRANSLATIONS['pt']['language_en']]
+    current_index = 0 if st.session_state.lang == 'pt' else 1
+    sel = st.sidebar.selectbox("Idioma", options=lang_options, index=current_index, key="ui_lang")
+    st.session_state.lang = 'pt' if sel == TRANSLATIONS['pt']['language_pt'] else 'en'
+
+    # Admin quick action: mark a manual compensação (tolerância de ponto)
+    if is_admin():
+        st.sidebar.markdown("<hr>", unsafe_allow_html=True)
+        st.sidebar.markdown("<div style='font-weight:700; margin-bottom:6px;'>Marcar tolerância de ponto (admin)</div>", unsafe_allow_html=True)
+        manual_tol = st.sidebar.date_input("Data (tolerância)", value=date.today(), key="manual_tol_date")
+        tol_label = st.sidebar.text_input("Rótulo", value="Tolerância de Ponto (Admin)", key="manual_tol_label")
+        if st.sidebar.button("Marcar tolerância", key="mark_tol_action", width='stretch'):
+            def apply_tol(vacations: list[dict], staff: list[dict], users: dict[str, dict]) -> None:
+                vacations.append(
+                    {
+                        "id": str(uuid4()),
+                        "employee_name": tol_label,
+                        "start_date": manual_tol,
+                        "end_date": manual_tol,
+                        "absence_type": "Compensação",
+                        "status": "approved",
+                        "requested_at": datetime.now(),
+                        "approved_at": datetime.now(),
+                        "approved_by": (current_user() or {}).get("username", "admin"),
+                        "created_by": (current_user() or {}).get("username", "admin"),
+                        "team": "",
+                        "reason": "Marca manual de tolerância",
+                    }
+                )
+            try:
+                mutate_data(apply_tol)
+                st.sidebar.success("Tolerância marcada com sucesso.")
+                st.experimental_rerun()
+            except DataStoreError as exc:
+                st.sidebar.error(f"Falha ao marcar tolerância: {exc}")
+
     st.sidebar.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -1228,6 +1330,7 @@ def render_calendar(vacations: list[dict], holidays: dict[date, str]) -> None:
     current = st.session_state.current_month
     range_start, range_end = selected_range()
     today = date.today()
+    st.markdown("<div class='section-shell calendar-shell'>", unsafe_allow_html=True)
     nav1, nav2, nav3, nav4 = st.columns([1, 2, 1, 1])
     with nav1: st.button("<", key="prev_month", on_click=previous_month, width='stretch')
     with nav2: st.markdown(f"### {month_name_pt(current.month)} {current.year}")
@@ -1301,6 +1404,7 @@ def render_calendar(vacations: list[dict], holidays: dict[date, str]) -> None:
                     day_summary.append(f"{len(pending)} pendente{'s' if len(pending) != 1 else ''}")
                 if day_summary:
                     st.markdown(f"<div class='calendar-count'>{' • '.join(day_summary)}</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_day_panel(vacations: list[dict], holidays: dict[date, str]) -> None:
@@ -1436,8 +1540,11 @@ def render_login_management() -> None:
                         raise DataStoreError("Já existe um login com esse utilizador.")
                     users[username] = dict(new_account)
 
-                mutate_data(apply_change)
-                st.success("Login criado com sucesso.")
+                try:
+                    mutate_data(apply_change)
+                    st.success("Login criado com sucesso.")
+                except DataStoreError as exc:
+                    st.error(str(exc))
                 request_login_form_reset()
                 st.rerun()
     if st.button("Limpar", key="clear_login_form", width='stretch'):
@@ -1517,17 +1624,20 @@ def render_login_management() -> None:
                         if edit_password:
                             users[selected_edit_username]["password_hash"] = hash_password(edit_password)
 
-                    mutate_data(apply_change)
-                    if (current_user() or {}).get("username") == selected_edit_username:
-                        st.session_state.current_user = {
-                            **(current_user() or {}),
-                            "name": edit_name.strip(),
-                            "role": edit_role,
-                            "staff_name": linked_staff_name,
-                        }
-                    request_edit_login_load(selected_edit_username)
-                    st.success("Login atualizado com sucesso.")
-                    st.rerun()
+                    try:
+                        mutate_data(apply_change)
+                        if (current_user() or {}).get("username") == selected_edit_username:
+                            st.session_state.current_user = {
+                                **(current_user() or {}),
+                                "name": edit_name.strip(),
+                                "role": edit_role,
+                                "staff_name": linked_staff_name,
+                            }
+                        request_edit_login_load(selected_edit_username)
+                        st.success("Login atualizado com sucesso.")
+                        st.rerun()
+                    except DataStoreError as exc:
+                        st.error(str(exc))
 
     removable_users = [username for username in sorted(st.session_state.users) if username != "admin"]
     if removable_users:
@@ -1540,16 +1650,19 @@ def render_login_management() -> None:
                     raise DataStoreError("Não pode remover a conta com a sessão atual.")
                 del users[remove_username]
 
-            mutate_data(apply_change)
-            st.success("Login removido com sucesso.")
-            st.rerun()
+            try:
+                mutate_data(apply_change)
+                st.success("Login removido com sucesso.")
+                st.rerun()
+            except DataStoreError as exc:
+                st.error(str(exc))
     else:
         st.info("Não existem logins removíveis neste momento.")
 
 
 def render_new_request_form(holidays: dict[date, str]) -> None:
-    st.subheader("✏️ Novo pedido a partir do calendário")
-    st.caption("Clique num dia para um pedido de 1 dia. Clique noutro dia para fechar um intervalo.")
+    st.subheader(t("new_request_subheader") if st.session_state.lang == 'en' else "✏️ Novo pedido a partir do calendário")
+    st.caption(t("new_request_caption") if st.session_state.lang == 'en' else "Clique num dia para um pedido de 1 dia. Clique noutro dia para fechar um intervalo.")
     if st.session_state.pending_new_request_reset:
         apply_new_request_reset()
         st.session_state.pending_new_request_reset = False
@@ -1559,17 +1672,21 @@ def render_new_request_form(holidays: dict[date, str]) -> None:
 
     active_staff_names = sorted([p["Nome"] for p in st.session_state.staff if p.get("Ativo", True)])
     if is_admin() and active_staff_names:
+        st.markdown("<span class='sr-only'>Colaborador selector</span>", unsafe_allow_html=True)
         employee_name = st.selectbox("Colaborador", options=active_staff_names)
         selected_staff = next((p for p in st.session_state.staff if p["Nome"] == employee_name), None)
     elif is_user():
         selected_staff = current_user_staff()
         employee_name = selected_staff["Nome"] if selected_staff else (current_user() or {}).get("staff_name", "")
+        st.markdown("<span class='sr-only'>Colaborador</span>", unsafe_allow_html=True)
         st.text_input("Colaborador", value=employee_name, disabled=True)
     else:
+        st.markdown("<span class='sr-only'>Nome do colaborador</span>", unsafe_allow_html=True)
         employee_name = st.text_input("Nome do colaborador")
 
     col_a, col_b = st.columns(2)
     with col_a:
+        st.markdown("<span class='sr-only'>Data de início</span>", unsafe_allow_html=True)
         st.date_input(
             "Data de início",
             value=st.session_state.new_request_start,
@@ -1580,6 +1697,7 @@ def render_new_request_form(holidays: dict[date, str]) -> None:
         absence_type = st.selectbox("Tipo de ausência", options=ABSENCE_TYPES, key="new_request_absence_type")
         half_day = st.checkbox("Meio dia", key="new_request_half_day", disabled=range_start != range_end)
     with col_b:
+        st.markdown("<span class='sr-only'>Data de fim</span>", unsafe_allow_html=True)
         st.date_input(
             "Data de fim",
             value=st.session_state.new_request_end,
@@ -1615,17 +1733,17 @@ def render_new_request_form(holidays: dict[date, str]) -> None:
         st.caption("O modo de meio dia só se aplica a pedidos de um único dia.")
 
     action_submit, action_clear = st.columns(2)
-    submitted = action_submit.button("Submeter pedido", key="submit_new_request", type="primary", width='stretch')
-    cleared = action_clear.button("Limpar", key="clear_new_request_form", width='stretch')
+    submitted = action_submit.button(t("submit_request") if st.session_state.lang == 'en' else "Submeter pedido", key="submit_new_request", type="primary", width='stretch')
+    cleared = action_clear.button(t("clear_request") if st.session_state.lang == 'en' else "Limpar", key="clear_new_request_form", width='stretch')
     if cleared:
         request_new_request_reset()
         st.rerun()
     if submitted:
         if not employee_name.strip():
-            st.error("Preencha o nome do colaborador.")
+            st.error(t("fill_employee_name") if st.session_state.lang == 'en' else "Preencha o nome do colaborador.")
             return
         if is_user() and not selected_staff:
-            st.error("A tua conta precisa de estar associada a uma pessoa do pessoal.")
+            st.error(t("account_needs_staff") if st.session_state.lang == 'en' else "A tua conta precisa de estar associada a uma pessoa do pessoal.")
             return
         team_name = selected_staff.get("Equipa", "") if selected_staff else ""
         new_request = {
@@ -1648,8 +1766,12 @@ def render_new_request_form(holidays: dict[date, str]) -> None:
         def apply_change(vacations: list[dict], _: list[dict], __: dict[str, dict]) -> None:
             vacations.append(dict(new_request))
 
-        mutate_data(apply_change)
-        st.success("Pedido criado com sucesso.")
+        try:
+            mutate_data(apply_change)
+            st.success("Pedido criado com sucesso.")
+        except DataStoreError as exc:
+            st.error(f"Falha ao criar pedido: {exc}")
+            return
         request_new_request_reset()
         st.rerun()
 
