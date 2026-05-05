@@ -1,0 +1,39 @@
+version: "3.8"
+
+services:
+  app:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data_store.json:/app/data_store.json
+      - ./audit_logs:/app/audit_logs
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-}
+      STREAMLIT_SERVER_HEADLESS: "true"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: PostgreSQL for data persistence
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: marcacao_ferias
+      POSTGRES_USER: ferias_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ferias_secure_pass}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ferias_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

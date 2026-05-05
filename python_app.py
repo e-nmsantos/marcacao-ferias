@@ -39,6 +39,7 @@ from vacation_app.storage import (
     validate_staff_list,
     validate_users_map,
 )
+from vacation_app.audit import log_mutation
 
 # Simple UI translations and i18n helper
 TRANSLATIONS = {
@@ -931,16 +932,22 @@ def update_vacation_status(vacation_id: str, new_status: str) -> None:
     def apply_change(vacations: list[dict], _: list[dict], __: dict[str, dict]) -> None:
         for vacation in vacations:
             if vacation["id"] == vacation_id:
-                vacation["status"] = new_status
-                if new_status == "approved":
-                    vacation["approved_at"] = datetime.now()
-                    vacation["approved_by"] = (current_user() or {}).get("username", "")
-                else:
-                    vacation["approved_at"] = None
-                    vacation["approved_by"] = ""
-                return
-        raise DataStoreError("Pedido não encontrado para atualizar.")
-
+                    old_status = vacation["status"]
+                    vacation["status"] = new_status
+                    if new_status == "approved":
+                        vacation["approved_at"] = datetime.now()
+                        vacation["approved_by"] = (current_user() or {}).get("username", "")
+                    else:
+                        vacation["approved_at"] = None
+                        vacation["approved_by"] = ""
+                    # Log the mutation
+                    log_mutation(
+                        action="status_change",
+                        entity="vacation",
+                        entity_id=vacation_id,
+                        username=(current_user() or {}).get("username"),
+                        details={"old_status": old_status, "new_status": new_status, "employee": vacation.get("employee_name")},
+                    )
     mutate_data(apply_change)
 
 
@@ -952,10 +959,16 @@ def delete_vacation(vacation_id: str) -> None:
         updated = [v for v in vacations if v["id"] != vacation_id]
         if len(updated) == len(vacations):
             raise DataStoreError("Pedido não encontrado para eliminar.")
-        vacations[:] = updated
-
-    mutate_data(apply_change)
-
+            deleted = next((v for v in vacations if v["id"] == vacation_id), None)
+            # Log the deletion
+            if deleted:
+                log_mutation(
+                    action="delete",
+                    entity="vacation",
+                    entity_id=vacation_id,
+                    username=(current_user() or {}).get("username"),
+                    details={"employee": deleted.get("employee_name"), "period": f"{deleted.get('start_date')} to {deleted.get('end_date')}"},
+                )
 
 def previous_month() -> None:
     current = st.session_state.current_month
@@ -1774,6 +1787,19 @@ def render_new_request_form(holidays: dict[date, str]) -> None:
 
         def apply_change(vacations: list[dict], _: list[dict], __: dict[str, dict]) -> None:
             vacations.append(dict(new_request))
+            # Log the creation
+            log_mutation(
+                action="create",
+                entity="vacation",
+                entity_id=new_request["id"],
+                username=new_request.get("created_by"),
+                details={
+                    "employee": new_request["employee_name"],
+                    "absence_type": new_request["absence_type"],
+                    "period": f"{new_request['start_date']} to {new_request['end_date']}",
+                    "team": new_request.get("team"),
+                },
+            )
 
         try:
             mutate_data(apply_change)
