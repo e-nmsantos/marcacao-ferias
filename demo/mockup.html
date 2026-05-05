@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="pt">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mockup Demo - Gestao de Ferias</title>
+  <style>
+    :root {
+      --bg: #f3f5f9;
+      --ink: #152038;
+      --muted: #4a5776;
+      --card: #ffffff;
+      --line: #d9dfeb;
+      --accent: #1f4ea8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      color: var(--ink);
+      background: radial-gradient(circle at top left, #ffffff 0%, var(--bg) 45%, #e8edf7 100%);
+    }
+    .wrap {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 28px;
+    }
+    h1 {
+      margin: 0 0 6px;
+      font-size: clamp(28px, 4vw, 42px);
+      letter-spacing: 0.2px;
+    }
+    .sub {
+      margin: 0 0 20px;
+      color: var(--muted);
+      font-size: 16px;
+    }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0 0 24px;
+    }
+    .chip {
+      padding: 7px 12px;
+      border: 1px solid var(--line);
+      background: #f8fafe;
+      border-radius: 999px;
+      font-size: 13px;
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(25, 44, 84, 0.08);
+    }
+    .meta {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+    .kicker {
+      display: inline-block;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #345ea6;
+      background: #edf3ff;
+      border: 1px solid #cfe0ff;
+      border-radius: 999px;
+      padding: 3px 8px;
+      margin-bottom: 7px;
+    }
+    .title {
+      margin: 0;
+      font-size: 17px;
+    }
+    img {
+      width: 100%;
+      display: block;
+      aspect-ratio: 16 / 9;
+      object-fit: cover;
+      background: #e9eef8;
+    }
+    .flow {
+      margin-top: 22px;
+      background: #ffffff;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px;
+    }
+    .flow strong { color: var(--accent); }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <h1>Mockup de Demo</h1>
+    <p class="sub">Gestao de Ferias - narrativa visual para apresentacao de produto</p>
+
+    <div class="chips">
+      <span class="chip">UX clara</span>
+      <span class="chip">Fluxo ponta-a-ponta</span>
+      <span class="chip">Governanca</span>
+      <span class="chip">Exportacao e backup</span>
+    </div>
+
+    <section class="grid">
+      <article class="card">
+        <div class="meta"><span class="kicker">Entrada</span><p class="title">Login seguro</p></div>
+        <img src="screenshots/01-login.png" alt="Ecra de login" />
+      </article>
+      <article class="card">
+        <div class="meta"><span class="kicker">Planeamento</span><p class="title">Calendario operacional</p></div>
+        <img src="screenshots/02-calendar.png" alt="Vista de calendario" />
+      </article>
+      <article class="card">
+        <div class="meta"><span class="kicker">Execucao</span><p class="title">Pedidos e decisoes</p></div>
+        <img src="screenshots/03-pedidos.png" alt="Vista de pedidos" />
+      </article>
+      <article class="card">
+        <div class="meta"><span class="kicker">Analise</span><p class="title">Relatorios exportaveis</p></div>
+        <img src="screenshots/04-relatorios.png" alt="Vista de relatorios" />
+      </article>
+      <article class="card">
+        <div class="meta"><span class="kicker">Admin</span><p class="title">Gestao de pessoal</p></div>
+        <img src="screenshots/05-pessoal.png" alt="Vista de pessoal" />
+      </article>
+      <article class="card">
+        <div class="meta"><span class="kicker">Seguranca</span><p class="title">Gestao de logins</p></div>
+        <img src="screenshots/06-logins.png" alt="Vista de logins" />
+      </article>
+      <article class="card">
+        <div class="meta"><span class="kicker">Continuidade</span><p class="title">Backup e restauro</p></div>
+        <img src="screenshots/07-backup.png" alt="Vista de backup" />
+      </article>
+    </section>
+
+    <section class="flow">
+      <p><strong>Flow de demo sugerido:</strong> Login -> Calendario -> Pedido -> Aprovacao -> Relatorio -> Admin (Pessoal/Logins) -> Backup.</p>
+    </section>
+  </main>
+</body>
+</html>

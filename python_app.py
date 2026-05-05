@@ -1218,16 +1218,13 @@ def render_sidebar_navigation(vacations: list[dict], holidays: dict[date, str]) 
     def nav_label(x: str) -> str:
         return f"{icons.get(x, '•')}  {x}"
 
-    try:
-        default_index = nav.index(st.session_state.main_nav)
-    except ValueError:
-        default_index = 0
-
-    chosen = st.sidebar.radio("Navegação", options=nav, index=default_index, key="main_nav", format_func=nav_label, label_visibility="collapsed")
-    # Update main_nav only if radio selection changed
-    if chosen != st.session_state.main_nav:
-        st.session_state.main_nav = chosen
-        st.rerun()
+    st.sidebar.radio(
+        "Navegação",
+        options=nav,
+        key="main_nav",
+        format_func=nav_label,
+        label_visibility="collapsed",
+    )
 
     st.sidebar.markdown("<div class='sidebar-section-title'>Resumo rápido</div>", unsafe_allow_html=True)
     st.sidebar.markdown(

@@ -1,5 +1,16 @@
 Demo — Gestao de Férias
 
+Visual assets generated:
+- screenshots/01-login.png
+- screenshots/02-calendar.png
+- screenshots/03-pedidos.png
+- screenshots/04-relatorios.png
+- screenshots/05-pessoal.png
+- screenshots/06-logins.png
+- screenshots/07-backup.png
+- MOCKUP.md
+- mockup.html
+
 Quick start (Windows PowerShell):
 
 ```powershell
