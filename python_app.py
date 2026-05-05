@@ -18,6 +18,7 @@ from vacation_app.calendar_utils import (
 from vacation_app.constants import (
     ABSENCE_TYPES,
     BACKUP_DIR,
+    MUNICIPAL_HOLIDAYS,
     NAV_ADMIN,
     NAV_USER,
     NAV_VIEWER,
@@ -150,6 +151,8 @@ def init_state() -> None:
         st.session_state.pending_edit_login_target = ""
     if "edit_login_selector" not in st.session_state:
         st.session_state.edit_login_selector = ""
+    if "selected_municipality" not in st.session_state:
+        st.session_state.selected_municipality = "Nenhum"
     refresh_state_from_disk(force=True)
 
 
@@ -158,19 +161,121 @@ def apply_styles() -> None:
         """
         <style>
         .stApp {
-            background: linear-gradient(180deg, #f8fafc 0%, #eef3f8 100%);
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 50%, #eef3f8 100%);
             color: #0f172a;
         }
         section[data-testid="stSidebar"] {
-            background: #f8fafc;
+            background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
             border-right: 1px solid #e2e8f0;
+        }
+        section[data-testid="stSidebar"] [data-testid="stSidebarContent"] {
+            padding-top: 1.2rem;
+        }
+        .sidebar-shell {
+            background: linear-gradient(180deg, #0f172a 0%, #111827 100%);
+            border-radius: 24px;
+            padding: 18px;
+            color: #e2e8f0;
+            box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+        }
+        .sidebar-brand {
+            color: #ffffff;
+            font-size: 24px;
+            font-weight: 800;
+            line-height: 1.1;
+        }
+        .sidebar-brand-sub {
+            color: #94a3b8;
+            font-size: 13px;
+            margin-top: 4px;
+        }
+        .sidebar-section-title {
+            color: #cbd5e1;
+            font-size: 12px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin: 14px 0 8px;
+        }
+        .sidebar-metric-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        .sidebar-metric {
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(148,163,184,0.18);
+            border-radius: 18px;
+            padding: 12px;
+        }
+        .sidebar-metric-label {
+            color: #94a3b8;
+            font-size: 11px;
+            font-weight: 700;
+        }
+        .sidebar-metric-value {
+            color: #ffffff;
+            font-size: 24px;
+            font-weight: 800;
+            line-height: 1.1;
+            margin-top: 4px;
+        }
+        .sidebar-metric-note {
+            color: #cbd5e1;
+            font-size: 11px;
+            margin-top: 4px;
+        }
+        .nav-chip {
+            display: block;
+            width: 100%;
+            text-align: left;
+            padding: 12px 14px;
+            margin-bottom: 8px;
+            border-radius: 16px;
+            border: 1px solid rgba(148,163,184,0.16);
+            background: rgba(255,255,255,0.05);
+            color: #e2e8f0 !important;
+            font-weight: 700;
+        }
+        .nav-chip:hover {
+            background: rgba(255,255,255,0.10) !important;
+            border-color: rgba(191,219,254,0.28) !important;
+        }
+        .nav-chip-active {
+            background: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%);
+            border-color: #93c5fd;
+            color: #ffffff !important;
+        }
+        .sidebar-action {
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(148,163,184,0.18);
+            border-radius: 18px;
+            padding: 12px;
+            margin-top: 10px;
+        }
+        .sidebar-action-title {
+            color: #ffffff;
+            font-size: 14px;
+            font-weight: 800;
+        }
+        .sidebar-action-text {
+            color: #cbd5e1;
+            font-size: 12px;
+            line-height: 1.5;
+            margin-top: 4px;
         }
         .soft-card {
             border: 1px solid #e2e8f0;
             border-radius: 18px;
-            background: rgba(255,255,255,0.88);
+            background: rgba(255,255,255,0.92);
             box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+            backdrop-filter: blur(10px);
             padding: 14px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .soft-card:hover {
+            box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+            border-color: #cbd5e1;
         }
         .page-kicker { color: #64748b; margin-top: -6px; }
         .stat-title { color: #64748b; font-size: 12px; }
@@ -182,13 +287,25 @@ def apply_styles() -> None:
             background: #ffffff;
             color: #0f172a !important;
             font-weight: 600;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        div[data-testid="stButton"] > button:hover {
+            background: #f1f5f9 !important;
+            border-color: #cbd5e1 !important;
+            box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
         }
         div[data-testid="stButton"] > button[kind="primary"],
         div[data-testid="stFormSubmitButton"] > button {
-            background: #dbeafe !important;
+            background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%) !important;
             border: 1px solid #93c5fd !important;
             color: #0f172a !important;
             font-weight: 700;
+            box-shadow: 0 4px 12px rgba(29, 78, 216, 0.12);
+        }
+        div[data-testid="stButton"] > button[kind="primary"]:hover,
+        div[data-testid="stFormSubmitButton"] > button:hover {
+            background: linear-gradient(135deg, #bfdbfe 0%, #93c5fd 100%) !important;
+            box-shadow: 0 6px 16px rgba(29, 78, 216, 0.18);
         }
         div[data-baseweb="input"] > div,
         div[data-baseweb="select"] > div,
@@ -200,11 +317,24 @@ def apply_styles() -> None:
         }
         label[data-testid="stWidgetLabel"] p { color: #334155 !important; font-weight: 600; }
         .section-shell {
-            background: rgba(255,255,255,0.72);
+            background: rgba(255,255,255,0.82);
             border: 1px solid rgba(226,232,240,0.9);
             border-radius: 20px;
             padding: 16px;
             box-shadow: 0 12px 30px rgba(15, 23, 42, 0.04);
+            backdrop-filter: blur(8px);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            animation: fadeInUp 0.4s ease-out;
+        }
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
         .brand-footer {
             margin-top: 18px;
@@ -217,7 +347,250 @@ def apply_styles() -> None:
             font-weight: 500;
             box-shadow: 0 12px 24px rgba(15, 23, 42, 0.16);
         }
+        .hero-shell {
+            border: 1px solid rgba(226,232,240,0.95);
+            border-radius: 24px;
+            background:
+                radial-gradient(circle at top right, rgba(219,234,254,0.95), transparent 34%),
+                linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(248,250,252,0.94) 100%);
+            box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+            padding: 20px;
+            margin: 12px 0 16px;
+        }
+        .hero-grid {
+            display: grid;
+            grid-template-columns: 1.5fr 1fr;
+            gap: 18px;
+            align-items: start;
+        }
+        .hero-eyebrow {
+            color: #1d4ed8;
+            font-size: 12px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+        .hero-title {
+            color: #0f172a;
+            font-size: 30px;
+            line-height: 1.05;
+            font-weight: 800;
+            margin: 6px 0 8px;
+        }
+        .hero-copy {
+            color: #334155;
+            font-size: 15px;
+            line-height: 1.6;
+            max-width: 64ch;
+        }
+        .hero-pills {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 14px;
+        }
+        .hero-pill {
+            border-radius: 999px;
+            padding: 7px 12px;
+            background: #ffffff;
+            border: 1px solid #dbeafe;
+            color: #1e3a8a;
+            font-size: 12px;
+            font-weight: 700;
+        }
+        .hero-steps {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+            margin-top: 16px;
+        }
+        .hero-step {
+            border-radius: 18px;
+            border: 1px solid #e2e8f0;
+            background: rgba(255,255,255,0.92);
+            padding: 12px;
+        }
+        .hero-step-number {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            border-radius: 999px;
+            background: #dbeafe;
+            color: #1d4ed8;
+            font-weight: 800;
+            margin-bottom: 8px;
+        }
+        .hero-step-title {
+            color: #0f172a;
+            font-weight: 700;
+            font-size: 13px;
+            margin-bottom: 4px;
+        }
+        .hero-step-text {
+            color: #475569;
+            font-size: 12px;
+            line-height: 1.45;
+        }
+        .hero-metrics {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+        .hero-metric {
+            border-radius: 18px;
+            border: 1px solid #dbeafe;
+            background: rgba(255,255,255,0.96);
+            padding: 14px;
+        }
+        .hero-metric-label {
+            color: #64748b;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .hero-metric-value {
+            color: #0f172a;
+            font-size: 24px;
+            line-height: 1.1;
+            font-weight: 800;
+            margin-top: 4px;
+        }
+        .hero-metric-note {
+            color: #475569;
+            font-size: 12px;
+            margin-top: 4px;
+        }
+        .hero-actions {
+            margin-top: 12px;
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+        }
+        .hero-action {
+            border: 1px solid #cbd5e1;
+            border-radius: 16px;
+            padding: 12px;
+            background: #ffffff;
+        }
+        .hero-action-title {
+            color: #0f172a;
+            font-weight: 800;
+            font-size: 13px;
+            margin-bottom: 4px;
+        }
+        .hero-action-text {
+            color: #475569;
+            font-size: 12px;
+            line-height: 1.45;
+        }
+        .login-pitch {
+            border-radius: 20px;
+            border: 1px solid #e2e8f0;
+            background: linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(248,250,252,0.94) 100%);
+            box-shadow: 0 14px 30px rgba(15, 23, 42, 0.06);
+            padding: 18px;
+        }
+        .login-pitch-title {
+            color: #0f172a;
+            font-size: 18px;
+            font-weight: 800;
+            margin-bottom: 8px;
+        }
+        .login-pitch-text {
+            color: #475569;
+            font-size: 14px;
+            line-height: 1.55;
+            margin-bottom: 14px;
+        }
+        .login-pitch-list {
+            display: grid;
+            gap: 10px;
+        }
+        .login-pitch-item {
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+            border-radius: 14px;
+            border: 1px solid #e2e8f0;
+            background: rgba(255,255,255,0.96);
+            padding: 12px;
+        }
+        .login-pitch-badge {
+            width: 24px;
+            height: 24px;
+            border-radius: 999px;
+            background: #dbeafe;
+            color: #1d4ed8;
+            font-size: 12px;
+            font-weight: 800;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex: 0 0 auto;
+        }
+        .login-pitch-item-title {
+            color: #0f172a;
+            font-size: 13px;
+            font-weight: 700;
+        }
+        .login-pitch-item-text {
+            color: #475569;
+            font-size: 12px;
+            line-height: 1.45;
+            margin-top: 2px;
+        }
         .calendar-hint { color: #64748b; font-size: 12px; margin-bottom: 8px; }
+        .status-badge {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .status-pending {
+            background: #fed7aa;
+            color: #92400e;
+            border: 1px solid #fdba74;
+        }
+        .status-approved {
+            background: #dcfce7;
+            color: #166534;
+            border: 1px solid #bbf7d0;
+        }
+        .status-rejected {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #fca5a5;
+        }
+        .request-card {
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            background: rgba(255,255,255,0.94);
+            padding: 14px;
+            margin-bottom: 10px;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .request-card:hover {
+            border-color: #cbd5e1;
+            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+        }
+        .request-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .request-title {
+            color: #0f172a;
+            font-weight: 700;
+            font-size: 14px;
+        }
         .calendar-meta {
             display: inline-block;
             font-size: 11px;
@@ -252,8 +625,217 @@ def current_user() -> dict | None:
     return st.session_state.current_user
 
 
+def set_main_nav(page: str) -> None:
+        st.session_state.main_nav = page
+
+
+def dashboard_metrics(vacations: list[dict], holidays: dict[date, str]) -> dict[str, str | int]:
+        pending = sum(1 for vacation in vacations if vacation["status"] == "pending")
+        approved = sum(1 for vacation in vacations if vacation["status"] == "approved")
+        today_absences = sum(
+                1
+                for vacation in vacations
+                if vacation["status"] == "approved" and vacation["start_date"] <= date.today() <= vacation["end_date"]
+        )
+        future_holidays = sorted([holiday for holiday in holidays if holiday >= date.today()])
+        next_holiday = "Sem feriados próximos"
+        if future_holidays:
+                holiday = future_holidays[0]
+                next_holiday = f"{format_date(holiday)} - {holidays[holiday]}"
+
+        current = st.session_state.current_month
+        conflict_days = 0
+        for day in range(1, 32):
+                try:
+                        current_day = date(current.year, current.month, day)
+                except ValueError:
+                        continue
+                approved_count = sum(
+                        1
+                        for vacation in vacations
+                        if vacation["status"] == "approved" and vacation["start_date"] <= current_day <= vacation["end_date"]
+                )
+                if approved_count >= st.session_state.conflict_limit:
+                        conflict_days += 1
+
+        return {
+                "pending": pending,
+                "approved": approved,
+                "today_absences": today_absences,
+                "conflict_days": conflict_days,
+                "next_holiday": next_holiday,
+        }
+
+
+def render_login_pitch() -> None:
+        st.markdown(
+                """
+                <div class='login-pitch'>
+                    <div class='login-pitch-title'>Pedido simples, estado visível, gestão mais rápida</div>
+                    <div class='login-pitch-text'>
+                        Esta aplicação junta o essencial que se vê em soluções como MarQHR, Factorial ou Cegid Visualtime:
+                        pedidos autónomos, acompanhamento em tempo real e uma visão clara para a equipa.
+                    </div>
+                    <div class='login-pitch-list'>
+                        <div class='login-pitch-item'>
+                            <div class='login-pitch-badge'>1</div>
+                            <div>
+                                <div class='login-pitch-item-title'>Pedido em poucos cliques</div>
+                                <div class='login-pitch-item-text'>O colaborador seleciona o período e submete sem e-mails ou passos manuais.</div>
+                            </div>
+                        </div>
+                        <div class='login-pitch-item'>
+                            <div class='login-pitch-badge'>2</div>
+                            <div>
+                                <div class='login-pitch-item-title'>Estado sempre claro</div>
+                                <div class='login-pitch-item-text'>Pedidos pendentes, aprovados ou rejeitados ficam visíveis no mesmo local.</div>
+                            </div>
+                        </div>
+                        <div class='login-pitch-item'>
+                            <div class='login-pitch-badge'>3</div>
+                            <div>
+                                <div class='login-pitch-item-title'>Controlo operacional</div>
+                                <div class='login-pitch-item-text'>Gestão de equipa, relatórios e backups para reduzir risco e trabalho repetitivo.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+        )
+
+
+def render_dashboard_hero(vacations: list[dict], holidays: dict[date, str], current_page: str) -> None:
+        metrics = dashboard_metrics(vacations, holidays)
+        role = (current_user() or {}).get("role", "viewer")
+        next_page = "Pedidos" if current_page == "Calendário" and role == "admin" else "Meus Pedidos" if role == "user" else "Relatórios"
+        action_label = "Ir para pedidos" if next_page == "Pedidos" else "Ver os meus pedidos" if next_page == "Meus Pedidos" else "Abrir relatórios"
+        action_hint = "Aprovar ou rejeitar solicitações" if next_page == "Pedidos" else "Acompanhar o estado dos pedidos" if next_page == "Meus Pedidos" else "Exportar e rever estatísticas"
+
+        st.markdown(
+                f"""
+                <div class='hero-shell'>
+                    <div class='hero-grid'>
+                        <div>
+                            <div class='hero-eyebrow'>Gestão de férias</div>
+                            <div class='hero-title'>Pedidos rápidos. Aprovação clara. Visão em tempo real.</div>
+                            <div class='hero-copy'>
+                                Inspirado nos melhores fluxos de gestão de ausências, este painel dá ao colaborador autonomia para pedir
+                                férias e ao gestor uma leitura imediata do que está pendente, aprovado e em risco de conflito.
+                            </div>
+                            <div class='hero-pills'>
+                                <span class='hero-pill'>Pedido autónomo</span>
+                                <span class='hero-pill'>Estado em tempo real</span>
+                                <span class='hero-pill'>Relatórios prontos</span>
+                                <span class='hero-pill'>Backup e restauro</span>
+                            </div>
+                            <div class='hero-steps'>
+                                <div class='hero-step'>
+                                    <div class='hero-step-number'>1</div>
+                                    <div class='hero-step-title'>Escolher datas</div>
+                                    <div class='hero-step-text'>Seleciona um dia ou um intervalo diretamente no calendário.</div>
+                                </div>
+                                <div class='hero-step'>
+                                    <div class='hero-step-number'>2</div>
+                                    <div class='hero-step-title'>Submeter pedido</div>
+                                    <div class='hero-step-text'>O pedido entra no sistema com o tipo de ausência e comentários.</div>
+                                </div>
+                                <div class='hero-step'>
+                                    <div class='hero-step-number'>3</div>
+                                    <div class='hero-step-title'>Acompanhar estado</div>
+                                    <div class='hero-step-text'>A aprovação, rejeição e conflitos ficam visíveis sem sair da app.</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div>
+                            <div class='hero-metrics'>
+                                <div class='hero-metric'>
+                                    <div class='hero-metric-label'>Pedidos pendentes</div>
+                                    <div class='hero-metric-value'>{metrics['pending']}</div>
+                                    <div class='hero-metric-note'>Aguardam validação da equipa responsável.</div>
+                                </div>
+                                <div class='hero-metric'>
+                                    <div class='hero-metric-label'>Aprovados</div>
+                                    <div class='hero-metric-value'>{metrics['approved']}</div>
+                                    <div class='hero-metric-note'>Pedidos já confirmados no sistema.</div>
+                                </div>
+                                <div class='hero-metric'>
+                                    <div class='hero-metric-label'>Ausentes hoje</div>
+                                    <div class='hero-metric-value'>{metrics['today_absences']}</div>
+                                    <div class='hero-metric-note'>Colaboradores fora do serviço no dia atual.</div>
+                                </div>
+                                <div class='hero-metric'>
+                                    <div class='hero-metric-label'>Dias com conflito</div>
+                                    <div class='hero-metric-value'>{metrics['conflict_days']}</div>
+                                    <div class='hero-metric-note'>No mês em foco, com base no limite configurado.</div>
+                                </div>
+                            </div>
+                            <div class='hero-action' style='margin-top:10px;'>
+                                <div class='hero-action-title'>Próximo feriado</div>
+                                <div class='hero-action-text'>{metrics['next_holiday']}</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class='hero-actions'>
+                        <div class='hero-action'>
+                            <div class='hero-action-title'>{action_label}</div>
+                            <div class='hero-action-text'>{action_hint}</div>
+                        </div>
+                        <div class='hero-action'>
+                            <div class='hero-action-title'>Visão da equipa</div>
+                            <div class='hero-action-text'>Calendário, pedidos e relatórios alinhados numa única experiência.</div>
+                        </div>
+                        <div class='hero-action'>
+                            <div class='hero-action-title'>Menos trabalho manual</div>
+                            <div class='hero-action-text'>Menos e-mails, menos folhas soltas, mais controlo operacional.</div>
+                        </div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+        )
+
+        if st.button(action_label, key=f"hero_action_{next_page}", type="primary"):
+                set_main_nav(next_page)
+                st.rerun()
+
+
 def is_admin() -> bool:
     return bool(current_user()) and current_user().get("role") == "admin"
+
+
+def get_status_emoji(status: str) -> str:
+    emojis = {
+        "pending": "⏳",
+        "approved": "✅",
+        "rejected": "❌",
+    }
+    return emojis.get(status, "📋")
+
+
+def get_absence_emoji(absence_type: str) -> str:
+    emojis = {
+        "Férias": "🏖️",
+        "Meio-dia": "☀️",
+        "Compensação": "⚡",
+        "Outro": "📌",
+    }
+    return emojis.get(absence_type, "📅")
+
+
+def add_compensations_to_holidays(vacations: list[dict], holidays: dict[date, str]) -> dict[date, str]:
+    """Add approved 'Compensação' (time-off compensation) as holidays so they don't count as business days."""
+    result = dict(holidays)  # Create a copy to avoid modifying the original
+    for vacation in vacations:
+        if vacation.get("absence_type") == "Compensação" and vacation.get("status") == "approved":
+            start_date = vacation.get("start_date")
+            end_date = vacation.get("end_date")
+            if start_date and end_date:
+                current = start_date
+                while current <= end_date:
+                    result[current] = "Tolerância de Ponto"
+                    current += timedelta(days=1)
+    return result
 
 
 def is_user() -> bool:
@@ -343,6 +925,21 @@ def select_calendar_day(day: date) -> None:
     st.session_state.range_end = end
     st.session_state.new_request_start = start
     st.session_state.new_request_end = end
+
+
+def sync_range_from_new_request_dates() -> None:
+    start = st.session_state.get("new_request_start", date.today())
+    end = st.session_state.get("new_request_end", start)
+    if start <= end:
+        normalized_start, normalized_end = start, end
+    else:
+        normalized_start, normalized_end = end, start
+    st.session_state.new_request_start = normalized_start
+    st.session_state.new_request_end = normalized_end
+    st.session_state.range_start = normalized_start
+    st.session_state.range_end = normalized_end
+    st.session_state.selected_day = normalized_end
+    st.session_state.current_month = date(normalized_end.year, normalized_end.month, 1)
 
 
 def day_in_selected_range(day: date) -> bool:
@@ -451,7 +1048,7 @@ def render_data_status() -> None:
 
 
 def login_screen() -> None:
-    left, center, right = st.columns([1.3, 1.8, 1.3])
+    left, center, right = st.columns([1.1, 1.6, 1.3])
     with center:
         st.markdown("<div class='soft-card'>", unsafe_allow_html=True)
         st.subheader("Iniciar sessão")
@@ -459,7 +1056,7 @@ def login_screen() -> None:
         with st.form("login_form"):
             username = st.text_input("Utilizador")
             password = st.text_input("Password", type="password")
-            submitted = st.form_submit_button("Entrar", type="primary", use_container_width=True)
+            submitted = st.form_submit_button("Entrar", type="primary", width='stretch')
             if submitted:
                 account = st.session_state.users.get(username.strip().lower())
                 if account and verify_password(password, account["password_hash"]):
@@ -474,6 +1071,8 @@ def login_screen() -> None:
                 st.error("Credenciais inválidas.")
         st.caption("As credenciais são validadas localmente e já não são expostas na interface.")
         st.markdown("</div>", unsafe_allow_html=True)
+    with right:
+        render_login_pitch()
 
 
 def top_header() -> None:
@@ -492,11 +1091,92 @@ def top_header() -> None:
             user = current_user() or {}
             st.caption(f"Sessão: {user.get('name', '-')}")
         with info_right:
-            if st.button("Sair", use_container_width=True):
+            if st.button("Sair", width='stretch'):
                 st.session_state.authenticated = False
                 st.session_state.current_user = None
                 st.rerun()
-        st.radio("", options=nav, horizontal=True, label_visibility="collapsed", key="main_nav")
+
+
+def render_sidebar_navigation(vacations: list[dict], holidays: dict[date, str]) -> None:
+    role = (current_user() or {}).get("role", "viewer")
+    nav = NAV_ADMIN if role == "admin" else NAV_USER if role == "user" else NAV_VIEWER
+    if st.session_state.main_nav not in nav:
+        st.session_state.main_nav = nav[0]
+
+    pending = sum(1 for vacation in vacations if vacation["status"] == "pending")
+    approved = sum(1 for vacation in vacations if vacation["status"] == "approved")
+    next_holiday = "Sem feriados próximos"
+    future_holidays = sorted([holiday for holiday in holidays if holiday >= date.today()])
+    if future_holidays:
+        holiday = future_holidays[0]
+        next_holiday = f"{format_date(holiday)} - {holidays[holiday]}"
+
+    st.sidebar.markdown(
+        """
+        <div class='sidebar-shell'>
+            <div class='sidebar-brand'>📅 Gestão de Férias</div>
+            <div class='sidebar-brand-sub'>Visão compacta, ações rápidas e leitura clara.</div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.sidebar.markdown("<div class='sidebar-section-title'>Navegação</div>", unsafe_allow_html=True)
+    icons = {
+        "Calendário": "📆",
+        "Pedidos": "📨",
+        "Meus Pedidos": "📨",
+        "Relatórios": "📊",
+        "Pessoal": "👥",
+        "Logins": "🔐",
+        "Backup": "💾",
+    }
+    def nav_label(x: str) -> str:
+        return f"{icons.get(x, '•')}  {x}"
+
+    try:
+        default_index = nav.index(st.session_state.main_nav)
+    except ValueError:
+        default_index = 0
+
+    chosen = st.sidebar.radio("", options=nav, index=default_index, key="main_nav", format_func=nav_label)
+    if chosen != st.session_state.main_nav:
+        set_main_nav(chosen)
+        st.rerun()
+
+    st.sidebar.markdown("<div class='sidebar-section-title'>Resumo rápido</div>", unsafe_allow_html=True)
+    st.sidebar.markdown(
+        f"""
+        <div class='sidebar-metric-grid'>
+            <div class='sidebar-metric'>
+                <div class='sidebar-metric-label'>Pendentes</div>
+                <div class='sidebar-metric-value'>{pending}</div>
+                <div class='sidebar-metric-note'>A aguardar validação</div>
+            </div>
+            <div class='sidebar-metric'>
+                <div class='sidebar-metric-label'>Aprovados</div>
+                <div class='sidebar-metric-value'>{approved}</div>
+                <div class='sidebar-metric-note'>Já confirmados</div>
+            </div>
+        </div>
+        <div class='sidebar-action'>
+            <div class='sidebar-action-title'>Próximo feriado</div>
+            <div class='sidebar-action-text'>{next_holiday}</div>
+        </div>
+        <div class='sidebar-action'>
+            <div class='sidebar-action-title'>Menu atual</div>
+            <div class='sidebar-action-text'>{st.session_state.main_nav}</div>
+        </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    quick_label = "Abrir pedidos" if role == "admin" else "Ver pedidos" if role == "user" else "Abrir relatórios"
+    quick_target = "Pedidos" if role == "admin" else "Meus Pedidos" if role == "user" else "Relatórios"
+    if st.sidebar.button(quick_label, key="sidebar_quick_action", type="primary", width='stretch'):
+        set_main_nav(quick_target)
+        st.rerun()
+
+    st.sidebar.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_stat_card(title: str, value: str, tone: str, subtitle: str = "") -> None:
@@ -549,10 +1229,10 @@ def render_calendar(vacations: list[dict], holidays: dict[date, str]) -> None:
     range_start, range_end = selected_range()
     today = date.today()
     nav1, nav2, nav3, nav4 = st.columns([1, 2, 1, 1])
-    with nav1: st.button("<", key="prev_month", on_click=previous_month, use_container_width=True)
+    with nav1: st.button("<", key="prev_month", on_click=previous_month, width='stretch')
     with nav2: st.markdown(f"### {month_name_pt(current.month)} {current.year}")
-    with nav3: st.button("Hoje", key="this_month", on_click=this_month, use_container_width=True)
-    with nav4: st.button(">", key="next_month", on_click=next_month, use_container_width=True)
+    with nav3: st.button("Hoje", key="this_month", on_click=this_month, width='stretch')
+    with nav4: st.button(">", key="next_month", on_click=next_month, width='stretch')
     if range_start == range_end:
         st.caption(f"Período selecionado para pedido: {format_date(range_start)}")
     else:
@@ -587,7 +1267,8 @@ def render_calendar(vacations: list[dict], holidays: dict[date, str]) -> None:
                 if is_today:
                     flags.append("Hoje")
                 if cell in holidays:
-                    flags.append("Feriado")
+                    holiday_label = holidays[cell]
+                    flags.append(holiday_label if holiday_label == "Tolerância de Ponto" else "Feriado")
                     style = "color:#6b21a8; background:#f3e8ff;"
                 if cell.weekday() >= 5:
                     flags.append("Fim de semana")
@@ -605,7 +1286,7 @@ def render_calendar(vacations: list[dict], holidays: dict[date, str]) -> None:
                 if st.button(
                     button_label,
                     key=f"day_{cell.isoformat()}",
-                    use_container_width=True,
+                    width='stretch',
                     type="primary" if selected or is_today else "secondary",
                     on_click=select_calendar_day,
                     args=(cell,),
@@ -663,35 +1344,49 @@ def render_requests(vacations: list[dict], can_manage: bool) -> None:
     for vacation in vacations:
         status = vacation["status"]
         duration = calculate_days(vacation["start_date"], vacation["end_date"])
-        with st.container(border=True):
-            st.markdown(
-                f"**{vacation['employee_name']}**  |  {STATUS_LABELS.get(status, status)}\n\n"
-                f"Tipo: {vacation.get('absence_type', 'Férias')}  \n"
-                f"Período: {format_date(vacation['start_date'])} até {format_date(vacation['end_date'])}  \n"
-                f"Duração: {duration} dias  \n"
-                f"Pedido em: {vacation['requested_at'].strftime('%d/%m/%Y %H:%M')}"
-            )
-            st.caption(f"Equipa: {vacation.get('team', 'Sem equipa')}")
-            if vacation.get("reason"):
-                st.write(f"Motivo: {vacation['reason']}")
-            if can_manage:
-                a1, a2, a3 = st.columns(3)
-                if status == "pending":
-                    if a1.button("Aprovar", key=f"approve_{vacation['id']}"):
-                        update_vacation_status(vacation["id"], "approved")
-                        st.rerun()
-                    if a2.button("Rejeitar", key=f"reject_{vacation['id']}"):
-                        update_vacation_status(vacation["id"], "rejected")
-                        st.rerun()
-                if a3.button("Eliminar", key=f"delete_{vacation['id']}"):
-                    delete_vacation(vacation["id"])
+        status_emoji = get_status_emoji(status)
+        absence_emoji = get_absence_emoji(vacation.get('absence_type', 'Férias'))
+        
+        st.markdown(
+            f"""
+            <div class='request-card'>
+                <div class='request-header'>
+                    <div class='request-title'>{absence_emoji} {vacation['employee_name']}</div>
+                    <span class='status-badge status-{status}'>{status_emoji} {STATUS_LABELS.get(status, status).upper()}</span>
+                </div>
+                <div style='color: #475569; font-size: 13px; line-height: 1.6;'>
+                    <strong>Tipo:</strong> {vacation.get('absence_type', 'Férias')} | <strong>Duração:</strong> {duration} dias<br>
+                    <strong>Período:</strong> {format_date(vacation['start_date'])} até {format_date(vacation['end_date'])}<br>
+                    <strong>Equipa:</strong> {vacation.get('team', 'Sem equipa')} | <strong>Pedido em:</strong> {vacation['requested_at'].strftime('%d/%m/%Y %H:%M')}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        
+        if vacation.get("reason"):
+            st.caption(f"💬 Comentário: {vacation['reason']}")
+        
+        if can_manage:
+            a1, a2, a3 = st.columns(3)
+            if status == "pending":
+                if a1.button("✅ Aprovar", key=f"approve_{vacation['id']}"):
+                    update_vacation_status(vacation["id"], "approved")
                     st.rerun()
-            else:
-                st.caption("Perfil de consulta: sem permissão para alterar pedidos.")
+                if a2.button("❌ Rejeitar", key=f"reject_{vacation['id']}"):
+                    update_vacation_status(vacation["id"], "rejected")
+                    st.rerun()
+            if a3.button("🗑️ Eliminar", key=f"delete_{vacation['id']}"):
+                delete_vacation(vacation["id"])
+                st.rerun()
+        else:
+            st.caption("🔒 Perfil de consulta: sem permissão para alterar pedidos.")
+        
+        st.divider()
 
 
 def render_login_management() -> None:
-    st.subheader("Gestão de logins")
+    st.subheader("🔐 Gestão de logins")
     st.caption("Só administradores podem criar, editar ou remover contas. As contas de consulta usam o perfil `viewer`.")
     if st.session_state.pending_login_reset:
         apply_login_form_reset()
@@ -714,7 +1409,7 @@ def render_login_management() -> None:
         )
         staff_options = ["Sem associação"] + active_staff_names
         selected_staff_name = st.selectbox("Colaborador associado", options=staff_options)
-        submitted = st.form_submit_button("Criar login", use_container_width=True)
+        submitted = st.form_submit_button("Criar login", width='stretch')
         if submitted:
             username = new_username.strip().lower()
             linked_staff_name = "" if selected_staff_name == "Sem associação" else selected_staff_name
@@ -745,7 +1440,7 @@ def render_login_management() -> None:
                 st.success("Login criado com sucesso.")
                 request_login_form_reset()
                 st.rerun()
-    if st.button("Limpar", key="clear_login_form", use_container_width=True):
+    if st.button("Limpar", key="clear_login_form", width='stretch'):
         request_login_form_reset()
         st.rerun()
 
@@ -760,7 +1455,7 @@ def render_login_management() -> None:
             for username, account in sorted(st.session_state.users.items())
         ]
     )
-    st.dataframe(users_table, use_container_width=True, hide_index=True)
+    st.dataframe(users_table, width='stretch', hide_index=True)
     st.caption("As passwords atuais não podem ser visualizadas porque ficam guardadas em hash. Pode redefinir uma nova password abaixo.")
 
     editable_users = sorted(st.session_state.users)
@@ -803,7 +1498,7 @@ def render_login_management() -> None:
                 key="edit_login_password",
                 help="Deixe em branco para manter a password atual.",
             )
-            submitted_edit = st.form_submit_button("Guardar alterações do login", use_container_width=True)
+            submitted_edit = st.form_submit_button("Guardar alterações do login", width='stretch')
             if submitted_edit:
                 linked_staff_name = "" if edit_staff_name == "Sem associação" else edit_staff_name
                 if not edit_name.strip():
@@ -837,7 +1532,7 @@ def render_login_management() -> None:
     removable_users = [username for username in sorted(st.session_state.users) if username != "admin"]
     if removable_users:
         remove_username = st.selectbox("Remover login", options=removable_users)
-        if st.button("Remover login", use_container_width=True):
+        if st.button("Remover login", width='stretch'):
             def apply_change(_: list[dict], __: list[dict], users: dict[str, dict]) -> None:
                 if remove_username not in users:
                     raise DataStoreError("Login não encontrado.")
@@ -853,7 +1548,7 @@ def render_login_management() -> None:
 
 
 def render_new_request_form(holidays: dict[date, str]) -> None:
-    st.subheader("Novo pedido a partir do calendário")
+    st.subheader("✏️ Novo pedido a partir do calendário")
     st.caption("Clique num dia para um pedido de 1 dia. Clique noutro dia para fechar um intervalo.")
     if st.session_state.pending_new_request_reset:
         apply_new_request_reset()
@@ -861,8 +1556,6 @@ def render_new_request_form(holidays: dict[date, str]) -> None:
 
     selected_staff = None
     range_start, range_end = selected_range()
-    st.session_state.new_request_start = range_start
-    st.session_state.new_request_end = range_end
 
     active_staff_names = sorted([p["Nome"] for p in st.session_state.staff if p.get("Ativo", True)])
     if is_admin() and active_staff_names:
@@ -877,13 +1570,27 @@ def render_new_request_form(holidays: dict[date, str]) -> None:
 
     col_a, col_b = st.columns(2)
     with col_a:
-        st.text_input("Data de início", value=format_date(range_start), disabled=True)
+        st.date_input(
+            "Data de início",
+            value=st.session_state.new_request_start,
+            key="new_request_start",
+            format="DD/MM/YYYY",
+            on_change=sync_range_from_new_request_dates,
+        )
         absence_type = st.selectbox("Tipo de ausência", options=ABSENCE_TYPES, key="new_request_absence_type")
         half_day = st.checkbox("Meio dia", key="new_request_half_day", disabled=range_start != range_end)
     with col_b:
-        st.text_input("Data de fim", value=format_date(range_end), disabled=True)
+        st.date_input(
+            "Data de fim",
+            value=st.session_state.new_request_end,
+            key="new_request_end",
+            format="DD/MM/YYYY",
+            on_change=sync_range_from_new_request_dates,
+        )
         replacement_contact = st.text_input("Substituto / contacto", key="new_request_replacement")
     reason = st.text_area("Comentário (opcional)", key="new_request_reason")
+
+    range_start, range_end = selected_range()
 
     total_days = calculate_days(range_start, range_end)
     business_days = calculate_business_days(range_start, range_end, holidays)
@@ -908,8 +1615,8 @@ def render_new_request_form(holidays: dict[date, str]) -> None:
         st.caption("O modo de meio dia só se aplica a pedidos de um único dia.")
 
     action_submit, action_clear = st.columns(2)
-    submitted = action_submit.button("Submeter pedido", key="submit_new_request", type="primary", use_container_width=True)
-    cleared = action_clear.button("Limpar", key="clear_new_request_form", use_container_width=True)
+    submitted = action_submit.button("Submeter pedido", key="submit_new_request", type="primary", width='stretch')
+    cleared = action_clear.button("Limpar", key="clear_new_request_form", width='stretch')
     if cleared:
         request_new_request_reset()
         st.rerun()
@@ -948,7 +1655,7 @@ def render_new_request_form(holidays: dict[date, str]) -> None:
 
 
 def render_staff_table() -> None:
-    st.subheader("Tabela de Pessoal")
+    st.subheader("👥 Tabela de Pessoal")
     st.caption("Gestão da lista de colaboradores.")
     if st.session_state.pending_staff_reset:
         apply_staff_form_reset()
@@ -960,8 +1667,8 @@ def render_staff_table() -> None:
         new_role = st.text_input("Função", key="staff_role")
         new_active = st.checkbox("Ativo", key="staff_active")
         action_submit, action_clear = st.columns(2)
-        submitted = action_submit.button("Adicionar colaborador", key="submit_staff_form", use_container_width=True)
-        cleared = action_clear.button("Limpar", key="clear_staff_form", use_container_width=True)
+        submitted = action_submit.button("Adicionar colaborador", key="submit_staff_form", width='stretch')
+        cleared = action_clear.button("Limpar", key="clear_staff_form", width='stretch')
         if cleared:
             request_staff_form_reset()
             st.rerun()
@@ -983,8 +1690,12 @@ def render_staff_table() -> None:
                         raise DataStoreError("Já existe um colaborador com esse nome.")
                     staff.append(dict(new_member))
 
-                mutate_data(apply_change)
-                st.success("Colaborador adicionado.")
+                try:
+                    mutate_data(apply_change)
+                except DataStoreError as exc:
+                    st.error(str(exc))
+                else:
+                    st.success("Colaborador adicionado.")
                 request_staff_form_reset()
                 st.rerun()
     with remove_col:
@@ -998,9 +1709,13 @@ def render_staff_table() -> None:
                         raise DataStoreError("Colaborador não encontrado para remover.")
                     staff[:] = updated
 
-                mutate_data(apply_change)
-                st.success("Colaborador removido.")
-                st.rerun()
+                try:
+                    mutate_data(apply_change)
+                except DataStoreError as exc:
+                    st.error(str(exc))
+                else:
+                    st.success("Colaborador removido.")
+                    st.rerun()
         else:
             st.info("Sem colaboradores para remover.")
 
@@ -1010,7 +1725,7 @@ def render_staff_table() -> None:
 
     edited_df = st.data_editor(
         pd.DataFrame(st.session_state.staff),
-        use_container_width=True,
+        width='stretch',
         num_rows="dynamic",
         key="staff_editor",
         column_config={
@@ -1037,13 +1752,17 @@ def render_staff_table() -> None:
                 ensure_staff_removal_allowed(removed_name, users, vacations)
             staff[:] = cleaned
 
-        mutate_data(apply_change)
-        st.success("Tabela de pessoal atualizada.")
-        st.rerun()
+        try:
+            mutate_data(apply_change)
+        except DataStoreError as exc:
+            st.error(str(exc))
+        else:
+            st.success("Tabela de pessoal atualizada.")
+            st.rerun()
 
 
 def render_reports() -> None:
-    st.subheader("Relatórios")
+    st.subheader("📊 Relatórios")
     st.caption("Mapa de férias para partilha com a chefia e controlo interno da equipa.")
 
     report_vacations = [vacation for vacation in st.session_state.vacations if vacation["status"] in {"approved", "pending"}]
@@ -1128,17 +1847,17 @@ def render_reports() -> None:
         render_stat_card("Pendentes", str(pending_count), "orange", "Aguarda validação")
 
     st.markdown("**Resumo por colaborador**")
-    st.dataframe(collaborator_df, use_container_width=True, hide_index=True)
+    st.dataframe(collaborator_df, width='stretch', hide_index=True)
 
     st.markdown("**Resumo por estado**")
-    st.dataframe(summary_df, use_container_width=True, hide_index=True)
+    st.dataframe(summary_df, width='stretch', hide_index=True)
 
     if not approved_df.empty:
         st.markdown("**Férias autorizadas**")
-        st.dataframe(approved_df, use_container_width=True, hide_index=True)
+        st.dataframe(approved_df, width='stretch', hide_index=True)
     if not pending_df.empty:
         st.markdown("**Férias pendentes**")
-        st.dataframe(pending_df, use_container_width=True, hide_index=True)
+        st.dataframe(pending_df, width='stretch', hide_index=True)
 
     export_col1, export_col2 = st.columns(2)
     detail_csv_data = detail_df.to_csv(index=False).encode("utf-8-sig")
@@ -1148,14 +1867,14 @@ def render_reports() -> None:
         data=detail_csv_data,
         file_name=f"relatorio_ferias_detalhe_{selected_team.lower()}_{selected_year}_{selected_month or 'ano'}.csv",
         mime="text/csv",
-        use_container_width=True,
+        width='stretch',
     )
     export_col2.download_button(
         "Descarregar resumo CSV",
         data=summary_csv_data,
         file_name=f"relatorio_ferias_resumo_{selected_team.lower()}_{selected_year}_{selected_month or 'ano'}.csv",
         mime="text/csv",
-        use_container_width=True,
+        width='stretch',
     )
 
     approved_map_vacations = [
@@ -1184,13 +1903,13 @@ def render_reports() -> None:
                 data=margarida_xlsx,
                 file_name=f"margarida_mapa_ferias_{selected_team.lower()}_{selected_year}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
+                width='stretch',
             )
     else:
         st.info("Não existem férias aprovadas para gerar o mapa anual com os filtros atuais.")
 
     st.markdown("**Detalhe completo do relatório**")
-    st.dataframe(detail_df, use_container_width=True, hide_index=True)
+    st.dataframe(detail_df, width='stretch', hide_index=True)
 
     csv_data = detail_df.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
@@ -1198,7 +1917,7 @@ def render_reports() -> None:
         data=csv_data,
         file_name=f"relatorio_ferias_{selected_team.lower()}_{selected_year}_{selected_month or 'ano'}.csv",
         mime="text/csv",
-        use_container_width=True,
+        width='stretch',
     )
 
 
@@ -1225,7 +1944,7 @@ def restore_payload(payload: dict) -> bool:
 
 
 def render_backup_tools() -> None:
-    st.subheader("Backup e restauro")
+    st.subheader("💾 Backup e restauro")
     payload = build_backup_payload()
     backup_text = json.dumps(payload, ensure_ascii=False, indent=2)
     st.download_button(
@@ -1233,15 +1952,15 @@ def render_backup_tools() -> None:
         data=backup_text,
         file_name=f"backup_ferias_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
         mime="application/json",
-        use_container_width=True,
+        width='stretch',
     )
-    if st.button("Criar snapshot local", use_container_width=True):
+    if st.button("Criar snapshot local", width='stretch'):
         BACKUP_DIR.mkdir(parents=True, exist_ok=True)
         backup_path = BACKUP_DIR / f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         backup_path.write_text(backup_text, encoding="utf-8")
         st.success(f"Snapshot criado em {backup_path.name}")
     uploaded = st.file_uploader("Restaurar de ficheiro", type=["json"])
-    if uploaded is not None and st.button("Restaurar backup", type="primary", use_container_width=True):
+    if uploaded is not None and st.button("Restaurar backup", type="primary", width='stretch'):
         try:
             payload = json.loads(uploaded.getvalue().decode("utf-8"))
         except Exception:
@@ -1256,13 +1975,19 @@ def render_backup_tools() -> None:
 
 def render_filters() -> tuple[str, str, int]:
     teams = sorted({p.get("Equipa", "").strip() for p in st.session_state.staff if p.get("Equipa", "").strip()})
-    c1, c2, c3 = st.columns([2, 2, 2])
+    c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
     with c1:
         team_filter = st.selectbox("Filtro por equipa", ["Todas"] + teams)
     with c2:
         status_filter = st.selectbox("Estado", options=STATUS_OPTIONS, format_func=lambda x: STATUS_LABELS[x])
     with c3:
         st.session_state.conflict_limit = st.number_input("Limite conflito", min_value=1, max_value=20, value=st.session_state.conflict_limit, step=1)
+    with c4:
+        st.session_state.selected_municipality = st.selectbox(
+            "Feriado municipal",
+            options=list(MUNICIPAL_HOLIDAYS.keys()),
+            key="municipality_selector"
+        )
     return team_filter, status_filter, st.session_state.conflict_limit
 
 
@@ -1286,11 +2011,36 @@ def main() -> None:
     top_header()
     render_data_status()
     team_filter, status_filter, _ = render_filters()
-    holidays = portugal_holidays(st.session_state.current_month.year, "Nenhum")
+    holidays = portugal_holidays(st.session_state.current_month.year, st.session_state.selected_municipality)
+    # Add approved compensations as holidays (they don't count as business days)
+    holidays = add_compensations_to_holidays(st.session_state.vacations, holidays)
     scope = "all" if is_admin() or (current_user() or {}).get("role") == "viewer" else "mine"
     visible_vacations = filtered_vacations(team_filter, status_filter, scope=scope)
+    render_sidebar_navigation(visible_vacations, holidays)
     nav = NAV_ADMIN if is_admin() else NAV_USER if is_user() else NAV_VIEWER
     current_page = st.session_state.get("main_nav", nav[0])
+
+    if current_page == "Calendário":
+        render_dashboard_hero(visible_vacations, holidays, current_page)
+    else:
+        page_subtitle = {
+            "Pedidos": "Aprovações e rejeições em destaque.",
+            "Meus Pedidos": "Acompanhar o estado dos teus pedidos.",
+            "Relatórios": "Análise e exportação dos dados.",
+            "Pessoal": "Gestão da equipa e associações.",
+            "Logins": "Contas, perfis e permissões.",
+            "Backup": "Exportação e restauro seguro.",
+        }.get(current_page, "")
+        st.markdown(
+            f"""
+            <div class='soft-card' style='margin-bottom: 16px;'>
+                <div class='stat-title'>SECÇÃO ATUAL</div>
+                <div class='stat-value' style='font-size: 24px; margin-top: 4px;'>{current_page}</div>
+                <div class='badge-row'>{page_subtitle}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     st.markdown("<div class='section-shell'>", unsafe_allow_html=True)
 

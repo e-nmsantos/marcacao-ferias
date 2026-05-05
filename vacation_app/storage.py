@@ -14,7 +14,7 @@ from vacation_app.constants import DATA_FILE, DATA_VERSION, DB_FILE, DEFAULT_USE
 
 POSTGRES_LOCK_KEY = 987654321
 _POSTGRES_LOCK_CONNECTION = None
-_SCHEMA_READY = False
+_SCHEMA_READY_TOKEN: str | None = None
 
 
 def _read_streamlit_secret() -> str:
@@ -254,12 +254,117 @@ def connect_db():
         connection.close()
 
 
+def _has_old_portuguese_schema(connection: sqlite3.Connection) -> bool:
+    cols = {row[1] for row in connection.execute("PRAGMA table_info(staff)").fetchall()}
+    return "nome" in cols
+
+
+def _sqlite_has_required_schema(connection: sqlite3.Connection) -> bool:
+    required = {"staff", "users", "vacations", "audit_log", "app_state"}
+    rows = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+    existing = {row[0] for row in rows}
+    return required.issubset(existing)
+
+
+def _migrate_portuguese_schema(connection: sqlite3.Connection) -> None:
+    staff_rows = connection.execute("SELECT nome, equipa, funcao, ativo FROM staff").fetchall()
+    user_rows = connection.execute("SELECT username, password_hash, role, name FROM users").fetchall()
+    vac_rows = connection.execute(
+        "SELECT id, employee_name, created_by, team, absence_type, start_date, end_date, "
+        "status, half_day, replacement_contact, reason, requested_at FROM vacations"
+    ).fetchall()
+    connection.executescript(
+        "DROP TABLE IF EXISTS vacations;"
+        "DROP TABLE IF EXISTS users;"
+        "DROP TABLE IF EXISTS staff;"
+        "DROP TABLE IF EXISTS audit_log;"
+    )
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS staff (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            team TEXT NOT NULL DEFAULT '',
+            role TEXT NOT NULL DEFAULT '',
+            active INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE TABLE IF NOT EXISTS users (
+            username TEXT PRIMARY KEY,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL,
+            name TEXT NOT NULL,
+            staff_id INTEGER NULL,
+            FOREIGN KEY (staff_id) REFERENCES staff(id) ON DELETE SET NULL
+        );
+        CREATE TABLE IF NOT EXISTS vacations (
+            id TEXT PRIMARY KEY,
+            employee_name TEXT NOT NULL,
+            staff_id INTEGER NULL,
+            created_by TEXT NULL DEFAULT '',
+            team TEXT NOT NULL DEFAULT '',
+            absence_type TEXT NOT NULL DEFAULT 'Férias',
+            start_date TEXT NOT NULL,
+            end_date TEXT NOT NULL,
+            status TEXT NOT NULL,
+            half_day INTEGER NOT NULL DEFAULT 0,
+            replacement_contact TEXT NOT NULL DEFAULT '',
+            reason TEXT NOT NULL DEFAULT '',
+            requested_at TEXT NOT NULL,
+            approved_at TEXT NULL,
+            approved_by TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY (staff_id) REFERENCES staff(id) ON DELETE SET NULL
+        );
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            entity_id TEXT NOT NULL,
+            actor TEXT NOT NULL DEFAULT '',
+            happened_at TEXT NOT NULL,
+            details TEXT NOT NULL DEFAULT ''
+        );
+        """
+    )
+    for row in staff_rows:
+        connection.execute(
+            "INSERT INTO staff (name, team, role, active) VALUES (?, ?, ?, ?)",
+            (row[0], row[1] or "", row[2] or "", row[3] if row[3] is not None else 1),
+        )
+    staff_map = dict(connection.execute("SELECT name, id FROM staff").fetchall())
+    for row in user_rows:
+        connection.execute(
+            "INSERT OR IGNORE INTO users (username, password_hash, role, name) VALUES (?, ?, ?, ?)",
+            (row[0], row[1], row[2], row[3]),
+        )
+    for row in vac_rows:
+        id_, employee_name, created_by, team, absence_type, start_date, end_date, status, half_day, replacement_contact, reason, requested_at = row
+        if absence_type and absence_type.lower() == "ferias":
+            absence_type = "Férias"
+        connection.execute(
+            "INSERT INTO vacations (id, employee_name, staff_id, created_by, team, absence_type, "
+            "start_date, end_date, status, half_day, replacement_contact, reason, requested_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                id_, employee_name, staff_map.get(employee_name),
+                created_by or "", team or "", absence_type or "Férias",
+                start_date, end_date, status or "pending",
+                half_day or 0, replacement_contact or "", reason or "", requested_at,
+            ),
+        )
+    connection.commit()
+
+
 def init_db() -> None:
-    global _SCHEMA_READY
-    if _SCHEMA_READY:
-        return
+    global _SCHEMA_READY_TOKEN
+    backend = storage_backend()
+    schema_token = f"{backend}:{get_database_url() if backend == 'postgres' else str(DB_FILE.resolve())}"
     with connect_db() as connection:
-        if storage_backend() == "postgres":
+        if _SCHEMA_READY_TOKEN == schema_token:
+            if backend == "postgres":
+                return
+            if _sqlite_has_required_schema(connection):
+                return
+        if backend == "postgres":
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS staff (
@@ -326,6 +431,8 @@ def init_db() -> None:
                 """
             )
         else:
+            if _has_old_portuguese_schema(connection):
+                _migrate_portuguese_schema(connection)
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS staff (
@@ -383,7 +490,7 @@ def init_db() -> None:
                 """
             )
         connection.commit()
-    _SCHEMA_READY = True
+    _SCHEMA_READY_TOKEN = schema_token
 
 
 def _has_relational_rows(connection: sqlite3.Connection) -> bool:

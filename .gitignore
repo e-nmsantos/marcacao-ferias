@@ -4,3 +4,14 @@ __pycache__/
 .streamlit/credentials.toml
 backups/
 ferias.db
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+*.egg
+pip-wheel-metadata/
+coverage.xml
+.coverage
+.coverage.*

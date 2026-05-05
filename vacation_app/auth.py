@@ -23,7 +23,20 @@ def hash_password(password: str) -> str:
     return build_password_hash(password, salt_b64=salt, iterations=PASSWORD_ITERATIONS)
 
 
+_LEGACY_SHA256_RE = None
+
+
+def _is_legacy_sha256(stored_hash: str) -> bool:
+    import re
+    global _LEGACY_SHA256_RE
+    if _LEGACY_SHA256_RE is None:
+        _LEGACY_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+    return bool(_LEGACY_SHA256_RE.match(stored_hash))
+
+
 def verify_password(password: str, stored_hash: str) -> bool:
+    if _is_legacy_sha256(stored_hash):
+        return hmac.compare_digest(stored_hash, hashlib.sha256(password.encode("utf-8")).hexdigest())
     try:
         algorithm, iterations_text, salt_b64, _ = stored_hash.split("$", 3)
         if algorithm != "pbkdf2_sha256":
@@ -53,7 +66,11 @@ def validate_user_account(username: str, item: dict, staff_names: set[str] | Non
     password_hash = str(item.get("password_hash", "")).strip()
     if not password_hash:
         raise DataStoreError(f"O login {normalized_username} precisa de password.")
-    if not verify_password("__validation_probe__", password_hash) and not password_hash.startswith("pbkdf2_sha256$"):
+    if (
+        not verify_password("__validation_probe__", password_hash)
+        and not password_hash.startswith("pbkdf2_sha256$")
+        and not _is_legacy_sha256(password_hash)
+    ):
         raise DataStoreError(f"Password inválida para login {normalized_username}.")
     staff_name = normalize_employee_name(str(item.get("staff_name", "")).strip())
     if role == "user":
