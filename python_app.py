@@ -1202,7 +1202,7 @@ def render_sidebar_navigation(vacations: list[dict], holidays: dict[date, str]) 
     except ValueError:
         default_index = 0
 
-    chosen = st.sidebar.radio("", options=nav, index=default_index, key="main_nav", format_func=nav_label)
+    chosen = st.sidebar.radio("Navegação", options=nav, index=default_index, key="main_nav", format_func=nav_label, label_visibility="collapsed")
     if chosen != st.session_state.main_nav:
         set_main_nav(chosen)
         st.rerun()
